@@ -175,6 +175,28 @@ describe("vramfit check, coloured or not", () => {
     expect(io.output).not.toContain(ESC);
   });
 
+  it("accepts --color and --no-color on every command", () => {
+    // The README's options table scopes every restricted flag by name --
+    // "compare only", "check only" -- and does not scope this one. A CI
+    // wrapper that appends --no-color to everything died on exit 2 here.
+    const fleetConfig = JSON.stringify({
+      ctx: 8192,
+      machines: [{ name: "box", device: "4090" }],
+      models: ["llama-3.1-8b"],
+    });
+    const fleet = new FakeIo({ text: { "fleet.json": fleetConfig } });
+    expect(run(["fleet", "--config", "fleet.json", "--no-color"], fleet)).toBe(EXIT_OK);
+    expect(fleet.errors).toBe("");
+
+    for (const command of ["devices", "models"]) {
+      const io = new FakeIo();
+      expect(run([command, "--no-color"], io), command).toBe(EXIT_OK);
+      expect(io.errors, command).toBe("");
+      const forced = new FakeIo();
+      expect(run([command, "--color"], forced), command).toBe(EXIT_OK);
+    }
+  });
+
   it("takes --color and --no-color over both", () => {
     const forced = new FakeIo({ isTty: false, env: { NO_COLOR: "1" } });
     run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--color"], forced);

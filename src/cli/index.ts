@@ -692,7 +692,11 @@ function resolveFleetEntry(
 }
 
 function runFleet(args: Args, io: Io, version: string): number {
-  args.assertKnown(["config", "json", "markdown", "help"]);
+  // `color` is a no-op for this renderer, which emits no escapes, but the
+  // README scopes every restricted flag by name and does not scope this one:
+  // a CI wrapper that appends --no-color to everything should not die on the
+  // one command README section 7.3 sells as the CI command.
+  args.assertKnown(["config", "json", "markdown", "color", "help"]);
   assertNoExtraArguments(args, "fleet", 1);
 
   const path = args.string("config");
@@ -757,7 +761,7 @@ function runBest(args: Args, io: Io, version: string): number {
 }
 
 function runList(args: Args, io: Io, kind: "devices" | "models"): number {
-  args.assertKnown(["json", "markdown", "help"]);
+  args.assertKnown(["json", "markdown", "color", "help"]);
   assertNoExtraArguments(args, kind, 1);
   const format = resolveFormat(args);
 

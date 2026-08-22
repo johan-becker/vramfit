@@ -129,6 +129,21 @@ describe("Args", () => {
     );
   });
 
+  it("names the option the way it was typed", () => {
+    // `--no-color` reaches the flag map as `color`, and reporting the
+    // normalised name tells the user off for a flag they never wrote.
+    const negated = Args.parse(["devices", "--no-colour"]);
+    expect(() => negated.assertKnown(["json"])).toThrow(/Unknown option "--no-colour"/);
+
+    const short = Args.parse(["check", "-d", "4090"]);
+    expect(() => short.assertKnown(["json"])).toThrow(/Unknown option "-d"/);
+
+    const shouted = Args.parse(["check", "--CTXX", "8k"]);
+    expect(() => shouted.assertKnown(["ctx"])).toThrow(
+      /Unknown option "--CTXX"\. Did you mean --ctx\?/,
+    );
+  });
+
   it("accepts every flag the command declares", () => {
     const args = Args.parse(["check", "m", "--ctx", "8k", "--json"]);
     expect(() => args.assertKnown(["ctx", "json"])).not.toThrow();
