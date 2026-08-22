@@ -158,6 +158,17 @@ describe("vramfit check <path> diagnostics", () => {
     expect(io.errors).toMatch(/\.\/notes\.gguf: not a GGUF file: it starts with "just"/);
   });
 
+  it("names a directory pointed at the GGUF reader", () => {
+    // A directory opens and stats happily on macOS and Linux, so the failure
+    // came out of the first read as a bare EISDIR: no path, and none of the
+    // "Try vramfit --help" every other usage error carries.
+    const io = new FakeIo({ directories: ["./Qwen3-30B-A3B"] });
+    expect(run(["check", "--gguf", "./Qwen3-30B-A3B", "-d", "4090"], io)).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/\.\/Qwen3-30B-A3B: not a GGUF file: it is a directory/);
+    expect(io.errors).toMatch(/Try "vramfit --help"/);
+    expect(io.errors).not.toMatch(/EISDIR/);
+  });
+
   it("refuses a path whose format it does not read", () => {
     const { code, io } = invoke(["check", "./model.safetensors", "-d", "4090"]);
     expect(code).toBe(EXIT_USAGE);
