@@ -145,8 +145,10 @@ export interface KvCacheBreakdown {
  * per token per layer instead of 16 heads * 128 dims * 2 = 4096, a 7x saving,
  * and it is why DeepSeek can serve 128k context economically.
  *
- * Interleaved sliding-window attention (Gemma 2/3, gpt-oss) caps most layers
- * at `windowSize` tokens; only every Nth layer keeps the full context.
+ * Sliding-window attention caps a local layer at `windowSize` tokens. Gemma
+ * 2/3 and gpt-oss interleave, so every Nth layer keeps the full context;
+ * a model that states a window and no period (Mistral, Phi-3) windows every
+ * layer, which is `fullAttentionEvery: null`.
  */
 export function computeKvCacheBytes(
   model: ModelSpec,
@@ -173,11 +175,13 @@ export function computeKvCacheBytes(
 
   for (let layer = 0; layer < model.nLayers; layer++) {
     let layerCtx = ctx;
-    if (window && window.fullAttentionEvery > 1) {
+    if (window) {
       // Convention: the last layer of every group of `fullAttentionEvery` is
       // the full-attention one (matching Gemma 3's 5 local : 1 global pattern
-      // and gpt-oss's strict alternation).
-      const isFullAttention = (layer + 1) % window.fullAttentionEvery === 0;
+      // and gpt-oss's strict alternation). A null period means there is no
+      // full-attention layer to land on.
+      const period = window.fullAttentionEvery;
+      const isFullAttention = period !== null && (layer + 1) % period === 0;
       if (!isFullAttention) {
         layerCtx = Math.min(ctx, window.windowSize);
         windowedLayers++;

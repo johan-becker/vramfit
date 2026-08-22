@@ -43,16 +43,23 @@ export interface MlaSpec {
 }
 
 /**
- * Interleaved sliding-window attention. Gemma 2/3 and gpt-oss alternate cheap
- * local-attention layers with a smaller number of full-attention layers, and
- * the local layers only ever cache `windowSize` tokens. Ignoring this
- * overestimates Gemma 3 27B's cache at 128K by roughly 4x.
+ * Sliding-window attention. A local-attention layer only ever caches
+ * `windowSize` tokens. Gemma 2/3 and gpt-oss *interleave* cheap local layers
+ * with a smaller number of full-attention ones; Mistral, Phi-3 and Qwen2 with
+ * `use_sliding_window` window every layer. Ignoring the window overestimates
+ * Gemma 3 27B's cache at 128K by roughly 4x; assuming the interleaving where
+ * the checkpoint does not state one underestimates Mistral's by 44%.
  */
 export interface AttentionWindowSpec {
   /** Tokens retained by a local-attention layer. */
   windowSize: number;
-  /** One layer in every N is full attention; the rest are windowed. */
-  fullAttentionEvery: number;
+  /**
+   * One layer in every N is full attention; the rest are windowed. Null when
+   * there is no full-attention layer at all, which is what a bare window with
+   * no stated period means -- interleaving is a property of the models that
+   * declare it, not of the field.
+   */
+  fullAttentionEvery: number | null;
 }
 
 export interface ModelSpec {

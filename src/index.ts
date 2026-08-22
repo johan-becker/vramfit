@@ -131,7 +131,7 @@ export type {
   VllmPlan,
 } from "./launcher.js";
 
-export { compareDevices, parseDeviceList } from "./compare.js";
+export { compareDevices, parseDeviceEntry, parseDeviceList, splitDeviceList } from "./compare.js";
 export { parseFleetConfig, planFleet } from "./fleet.js";
 export type {
   FleetCell,
@@ -143,7 +143,7 @@ export type {
   FleetReport,
   FleetRow,
 } from "./fleet.js";
-export type { DeviceCandidate, DeviceComparison } from "./compare.js";
+export type { DeviceCandidate, DeviceComparison, DeviceListEntry } from "./compare.js";
 
 export type {
   BandwidthPair,

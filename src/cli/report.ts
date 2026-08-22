@@ -1,7 +1,7 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import type { FleetMachine, FleetReport } from "../fleet.js";
-import type { LauncherPlan, LauncherRuntime } from "../launcher.js";
+import { notesFor, type LauncherPlan, type LauncherRuntime } from "../launcher.js";
 import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
@@ -413,7 +413,12 @@ export function renderBest(
   const shape = bestTableShape(options, ctx);
 
   const starved = options.find(isOffloadInfeasible);
-  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
+  // A file on disk states its format by being in it, which is a stronger
+  // answer than the model's declared `nativeQuant` and the one the table was
+  // ranked from.
+  const native =
+    report.source?.quant ??
+    (model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant));
   const recommended = options.find((option) => option.fit.fits);
 
   return [
@@ -431,7 +436,7 @@ export function renderBest(
       : []),
     ...(native
       ? wrap(
-          `${model.name} ships in ${native.label}, so that is the best quality there is for it: a wider quantization would be a larger file holding the same ${native.bitsPerWeight} bits per weight, and is left out.`,
+          `${model.name} ${report.source?.quant === undefined ? "ships in" : "is on disk as"} ${native.label}, so that is the best quality there is for it: a wider quantization would be a larger file holding the same ${native.bitsPerWeight.toFixed(2)} bits per weight, and is left out.`,
           WRAP_WIDTH,
         ).concat("")
       : []),
@@ -537,7 +542,7 @@ export function modelsTableShape(models: readonly ModelSpec[]): TableShape {
       model.attention === "mla"
         ? "MLA"
         : model.attentionWindow
-          ? `GQA + SWA/${model.attentionWindow.fullAttentionEvery}`
+          ? `GQA + SWA${model.attentionWindow.fullAttentionEvery === null ? "" : `/${model.attentionWindow.fullAttentionEvery}`}`
           : "GQA",
     ]),
   };
@@ -700,6 +705,22 @@ export function recommendTableShape(rows: readonly Recommendation[]): TableShape
 }
 
 /**
+ * Where column `index` starts in a rendered table, read off the separator row.
+ *
+ * `renderTable` sizes each column to its widest cell, so the offset is not
+ * something a caller can hard-code and have stay right.
+ */
+function columnStart(separator: string, index: number): number {
+  let at = 0;
+  for (let column = 0; column < index; column++) {
+    const gap = separator.indexOf(" ", at);
+    if (gap < 0) return separator.length;
+    at = gap + 2;
+  }
+  return at;
+}
+
+/**
  * The `vramfit recommend` list.
  *
  * An aligned table would fit more rows on a screen and answer less: the point
@@ -733,9 +754,14 @@ export function renderRecommend(
 
   const [header, separator, ...body] = table;
   lines.push(header as string, separator as string);
+  // The trade-off is a continuation of its row, so it starts under the Model
+  // column: the width of the "#" column plus the two-space gap. That width is
+  // renderTable's, not a constant -- it grows to three from the tenth row on,
+  // which is every unlimited "recommend".
+  const indent = " ".repeat(columnStart(separator as string, 1));
   body.forEach((line, index) => {
     const row = rows[index];
-    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, "    ")), "");
+    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, indent)), "");
   });
 
   lines.push(
@@ -937,11 +963,16 @@ function launcherBlock(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
   }
   if (wants("ollama")) {
     if (lines.length > 0) lines.push("");
-    lines.push(
-      "  Ollama  (Modelfile)",
-      ...plan.ollama.modelfile.map((line) => `    ${line}`),
-      `    ${plan.ollama.environment.join("  ")}`,
-    );
+    lines.push("  Ollama  (Modelfile)", ...plan.ollama.modelfile.map((line) => `    ${line}`));
+    // The environment variables are not Modelfile commands: `ollama create`
+    // rejects a file that carries them, and this block is meant to be pasted.
+    if (plan.ollama.environment.length > 0) {
+      lines.push(
+        "",
+        "  Ollama  (environment, not the Modelfile)",
+        ...plan.ollama.environment.map((line) => `    ${line}`),
+      );
+    }
   }
   if (wants("vllm")) {
     if (lines.length > 0) lines.push("");
@@ -953,9 +984,10 @@ function launcherBlock(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
 /** The `Launch` section of `vramfit check --launcher`. */
 export function renderLaunch(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
   const lines = ["Launch", ...launcherBlock(plan, runtime)];
-  if (plan.notes.length > 0) {
+  const notes = notesFor(plan, runtime);
+  if (notes.length > 0) {
     lines.push("");
-    for (const note of plan.notes) {
+    for (const note of notes) {
       const wrapped = wrap(note, WRAP_WIDTH, "    ");
       lines.push(`  - ${(wrapped[0] ?? "").trimStart()}`, ...wrapped.slice(1));
     }

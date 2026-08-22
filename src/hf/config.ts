@@ -17,8 +17,10 @@ import type {
  * and means "same as the query heads"; `head_dim` is absent on most and means
  * `hidden_size / num_attention_heads`, except on the models where it does not;
  * the expert count is `num_local_experts` on Mixtral, `num_experts` on
- * Qwen3-MoE and `n_routed_experts` on DeepSeek; and `sliding_window` is set
- * but inert on Qwen2 unless `use_sliding_window` is true.
+ * Qwen3-MoE and `n_routed_experts` on DeepSeek; `sliding_window` is set but
+ * inert on Qwen2 unless `use_sliding_window` is true; and `tie_word_embeddings`
+ * is absent from every config that ties, because `PretrainedConfig` defaults it
+ * to true and `to_diff_dict` writes only what differs from the default.
  *
  * Getting any of those wrong is a wrong VRAM number rather than a crash, which
  * is why each one is spelled out below with the alternatives it accepts.
@@ -168,13 +170,20 @@ function moeFrom(config: Json, nLayers: number, ffnHidden: number): MoeSpec | nu
 }
 
 /**
- * Interleaved sliding-window attention.
+ * Sliding-window attention.
  *
- * Two traps. Qwen2 writes a `sliding_window` that is inert unless
+ * Three traps. Qwen2 writes a `sliding_window` that is inert unless
  * `use_sliding_window` is true, so honouring it there would undersize the
- * cache by the ratio of window to context -- the dangerous direction. And
- * Gemma 3 states its 5-local-to-1-global pattern in `sliding_window_pattern`,
- * while Gemma 2 states nothing and simply alternates.
+ * cache by the ratio of window to context -- the dangerous direction. Gemma 3
+ * states its 5-local-to-1-global pattern in `sliding_window_pattern`, and
+ * newer configs list every layer's flavour in `layer_types` instead.
+ *
+ * And the third: a config that states a window and nothing else means every
+ * layer is windowed, which is what `sliding_window` means in transformers
+ * (Mistral, Phi-3, Qwen2 with the switch on). Interleaving belongs to the
+ * models that declare it. Assuming Gemma 2's alternation everywhere put
+ * Mistral 7B's 32K cache at 2.25 GiB, which is neither the 4.00 GiB llama.cpp
+ * allocates nor the 0.50 GiB a runtime that honours the window does.
  */
 function attentionWindowFrom(config: Json): AttentionWindowSpec | null {
   const windowSize = pickNumber(config, ["sliding_window", "attention_window_size"]);
@@ -182,30 +191,55 @@ function attentionWindowFrom(config: Json): AttentionWindowSpec | null {
   if (pickBoolean(config, ["use_sliding_window"]) === false) return null;
 
   const declared = pickNumber(config, ["sliding_window_pattern", "layer_types_period"]);
-  const pattern = declared ?? patternFromLayerTypes(config) ?? 2;
-  if (pattern < 2) return null;
-  return { windowSize, fullAttentionEvery: pattern };
+  // A period of 1 means every layer is a full-attention layer: no windowing.
+  if (declared !== undefined) {
+    return declared < 2 ? null : { windowSize, fullAttentionEvery: declared };
+  }
+
+  const listed = patternFromLayerTypes(config);
+  if (listed !== undefined) {
+    if (listed.kind === "none" || listed.kind === "irregular") return null;
+    return { windowSize, fullAttentionEvery: listed.kind === "period" ? listed.period : null };
+  }
+  return { windowSize, fullAttentionEvery: null };
 }
+
+/** What a `layer_types` list says about the window, when it says anything. */
+type LayerTypes =
+  /** Every layer is a full-attention one: the window is inert. */
+  | { kind: "none" }
+  /** No full-attention layer at all: every layer is windowed. */
+  | { kind: "every" }
+  /** One full-attention layer in every `period`. */
+  | { kind: "period"; period: number }
+  /** A list vramfit's single repeating pattern cannot express. */
+  | { kind: "irregular" };
 
 /**
  * Newer configs list the flavour of every layer in `layer_types` rather than
  * stating a period. The period is the distance between full-attention layers,
  * which is what the KV formula needs; a list that is not periodic is refused
- * rather than averaged, since vramfit models one repeating pattern.
+ * rather than averaged, since vramfit models one repeating pattern -- and
+ * refusing means sizing the cache without a window, which overestimates
+ * rather than under.
  */
-function patternFromLayerTypes(config: Json): number | undefined {
+function patternFromLayerTypes(config: Json): LayerTypes | undefined {
   const raw = config["layer_types"];
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  if (!raw.every((entry) => typeof entry === "string")) return undefined;
+
   const fullAt: number[] = [];
   raw.forEach((entry, index) => {
-    if (typeof entry === "string" && entry.includes("full")) fullAt.push(index);
+    if ((entry as string).includes("full")) fullAt.push(index);
   });
-  if (fullAt.length === 0) return undefined;
+  if (fullAt.length === raw.length) return { kind: "none" };
+  if (fullAt.length === 0) return { kind: "every" };
+
   const first = fullAt[0] as number;
-  if (fullAt.length === 1) return raw.length;
+  if (fullAt.length === 1) return { kind: "period", period: raw.length };
   const period = (fullAt[1] as number) - first;
   const periodic = fullAt.every((position, index) => position === first + index * period);
-  return periodic && period >= 2 ? period : undefined;
+  return periodic && period >= 2 ? { kind: "period", period } : { kind: "irregular" };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -247,6 +281,13 @@ const DEFAULT_CHECK_CONTEXT = 8192;
  * the vision tower as well as the decoder, and charging its parameters to the
  * decoder would report a model that does not exist. The decoder's own count
  * is used instead, and the difference is reported rather than swallowed.
+ *
+ * The excursion has a sign, and only one of the two directions can be an
+ * extra tower: weight files *smaller* than the derivation mean the derivation
+ * is wrong or the checkpoint is incomplete. The decoder's count is still what
+ * the report is sized from -- it is the larger of the two, and a header that
+ * lists only some of a repository's tensors would otherwise size an 8B model
+ * as a 1B -- but the note says which of the two it is.
  */
 const WEIGHT_COUNT_TOLERANCE = 0.05;
 
@@ -291,6 +332,13 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
   const architecture = pickString(config, ["model_type"]) ?? pickString(root, ["model_type"]) ?? "unknown";
   const name = displayName(root, architecture);
   const mla = mlaFrom(config);
+  // Absent means tied. `PretrainedConfig.__init__` defaults the field to true
+  // and `to_diff_dict` omits any value equal to the default, so a checkpoint
+  // that ties -- Gemma, Phi-3, several Qwen and StableLM releases -- ships a
+  // config.json without the key at all. Reading that as "untied" charges a
+  // second vocab x hidden matrix that is not on disk: +22.6% of parameters on
+  // gemma-2-2b, which then fails the safetensors cross-check as well.
+  const tiedDeclared = pickBoolean(config, TIED) ?? pickBoolean(root, TIED);
 
   const draft: ModelSpec = {
     id: slug(name, `hf-${architecture}`),
@@ -307,7 +355,7 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
     headDim: mla === null ? headDim : mla.qkNopeHeadDim + mla.qkRopeHeadDim,
     ffnHidden,
     vocabSize,
-    tiedEmbeddings: pickBoolean(config, TIED) ?? pickBoolean(root, TIED) ?? false,
+    tiedEmbeddings: tiedDeclared ?? true,
     attention: mla === null ? "gqa" : "mla",
     mla,
     moe: moeFrom(config, nLayers, ffnHidden),
@@ -325,6 +373,17 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
   // includes the norms and biases the architecture sum leaves out.
   const derived = deriveArchitecture(draft);
   const notes: string[] = [];
+  const window = draft.attentionWindow;
+  if (window !== null && window.fullAttentionEvery === null) {
+    notes.push(
+      `This config sets sliding_window ${window.windowSize} but neither sliding_window_pattern nor layer_types, so every one of the ${nLayers} layers is sized as windowed -- which is what the field means in transformers. llama.cpp does not implement sliding-window attention for every architecture and may allocate the full context on all of them instead.`,
+    );
+  }
+  if (tiedDeclared === undefined) {
+    notes.push(
+      `This config does not set tie_word_embeddings, which transformers defaults to true and writes out only when it is false. The output projection is therefore charged as the embedding table rather than as a second ${vocabSize} x ${hiddenSize} matrix; pass a spec with --model-json if the checkpoint really does carry both.`,
+    );
+  }
   let paramSource: ParamSource = "architecture";
   let totalParams = derived.derivedTotalParams;
 
@@ -335,8 +394,11 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
       totalParams = weights.totalParams;
       paramSource = weights.source;
     } else {
+      const apart = `The weight files hold ${Math.round(weights.totalParams)} parameters but the text decoder in this config accounts for ${Math.round(derived.derivedTotalParams)} -- ${(drift * 100).toFixed(1)}% apart`;
       notes.push(
-        `The weight files hold ${Math.round(weights.totalParams)} parameters but the text decoder in this config accounts for ${Math.round(derived.derivedTotalParams)} -- ${(drift * 100).toFixed(1)}% apart, which usually means the checkpoint carries a vision tower or another head as well. Sized from the decoder; the rest would occupy memory too if you loaded it.`,
+        weights.totalParams > derived.derivedTotalParams
+          ? `${apart}, which usually means the checkpoint carries a vision tower or another head as well. Sized from the decoder; the rest would occupy memory too if you loaded it.`
+          : `${apart}, and fewer parameters on disk than the config implies cannot be an extra head: either the weight files are incomplete, or one of tie_word_embeddings, vocab_size and torch_dtype does not describe this checkpoint. Sized from the decoder, which is the larger of the two.`,
       );
     }
   }

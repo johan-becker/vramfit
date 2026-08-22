@@ -1,7 +1,7 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import type { FleetReport } from "../fleet.js";
-import type { LauncherPlan, LauncherRuntime } from "../launcher.js";
+import { notesFor, type LauncherPlan, type LauncherRuntime } from "../launcher.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { formatBytes, formatContext, formatParams } from "../units.js";
@@ -248,12 +248,28 @@ export function renderCheckMarkdown(
 function launcherMarkdown(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
   const wants = (id: LauncherRuntime): boolean => runtime === "all" || runtime === id;
   const lines: string[] = [];
-  if (wants("llama.cpp")) lines.push(...fenced([plan.llamaCpp.command], "sh"), "");
-  if (wants("ollama")) {
-    lines.push(...fenced([...plan.ollama.modelfile, ...plan.ollama.environment], "dockerfile"), "");
+  // The terminal renderer labels each block; three unlabelled fences leave the
+  // reader to infer which runtime is which from the binary names, and that is
+  // a content difference rather than the width one this format exists for.
+  if (wants("llama.cpp")) {
+    lines.push("*llama.cpp*", "", ...fenced([plan.llamaCpp.command], "sh"), "");
   }
-  if (wants("vllm")) lines.push(...fenced([plan.vllm.command], "sh"), "");
-  if (plan.notes.length > 0) lines.push(...bulletList(plan.notes), "");
+  if (wants("ollama")) {
+    lines.push("*Ollama — Modelfile*", "", ...fenced(plan.ollama.modelfile, "dockerfile"), "");
+    if (plan.ollama.environment.length > 0) {
+      lines.push(
+        "*Ollama — environment, not the Modelfile*",
+        "",
+        ...fenced(plan.ollama.environment, "sh"),
+        "",
+      );
+    }
+  }
+  if (wants("vllm")) {
+    lines.push("*vLLM*", "", ...fenced([plan.vllm.command], "sh"), "");
+  }
+  const notes = notesFor(plan, runtime);
+  if (notes.length > 0) lines.push(...bulletList(notes), "");
   return lines;
 }
 

@@ -34,6 +34,14 @@ describe("parseDeviceList", () => {
     expect(() => parseDeviceList("")).toThrow(/no devices given/);
     expect(() => parseDeviceList(" , , ")).toThrow(/no devices given/);
   });
+
+  it("gives an entry with no count of its own the default", () => {
+    // Which is how --gpus reaches a list that does not spell the count out.
+    expect(parseDeviceList("4090,3090x4", 2)).toEqual([
+      { query: "4090", gpus: 2 },
+      { query: "3090", gpus: 4 },
+    ]);
+  });
 });
 
 describe("compareDevices", () => {
@@ -197,5 +205,55 @@ describe("vramfit compare", () => {
     const { code, io } = invoke(["compare", "llama-3.1-8b", "--devices", "4090x0"]);
     expect(code).toBe(EXIT_USAGE);
     expect(io.errors).toMatch(/asks for 0 devices/);
+  });
+
+  it("accepts a name that itself ends in x and a number", () => {
+    // rtx4090 and 4090x2 are the same shape. Splitting the count off first
+    // amputated the alias and then reported an unknown device "rt" -- a name
+    // the user never typed, for a spelling "check -d rtx4090" accepts.
+    for (const spelling of ["rtx4090", "rtx3090", "NVIDIA RTX 4090"]) {
+      const { code, io } = invoke(["compare", "llama-3.1-8b", "--devices", spelling, "--ctx", "8k"]);
+      expect(code, spelling).toBe(EXIT_OK);
+      expect(io.errors, spelling).toBe("");
+    }
+    // The count still parses when the whole token is not a device.
+    const pair = invoke(["compare", "llama-3.1-8b", "--devices", "rtx4090x2", "--ctx", "8k"]);
+    expect(pair.code).toBe(EXIT_OK);
+    expect(pair.io.output).toMatch(/2 x NVIDIA RTX 4090/);
+  });
+
+  it("applies --gpus to every entry that does not carry its own count", () => {
+    // compare accepts --gpus, so it has to mean the same thing here as it
+    // does in check: the two commands cannot answer the same question with
+    // opposite exit codes.
+    const compared = invoke([
+      "compare",
+      "llama-3.3-70b",
+      "--devices",
+      "rtx-4090",
+      "--gpus",
+      "2",
+      "--ctx",
+      "8k",
+    ]);
+    expect(compared.code).toBe(EXIT_OK);
+    expect(compared.io.output).toMatch(/2 x NVIDIA RTX 4090\s+48\.00 GiB\s+44\.39 GiB/);
+
+    const checked = invoke(["check", "llama-3.3-70b", "-d", "rtx-4090", "--gpus", "2", "--ctx", "8k"]);
+    expect(checked.code).toBe(EXIT_OK);
+    expect(checked.io.output).toMatch(/FITS {2}- {2}44\.39 GiB of 48\.00 GiB used/);
+
+    // An entry with its own count keeps it.
+    const explicit = invoke([
+      "compare",
+      "llama-3.3-70b",
+      "--devices",
+      "rtx-4090x1",
+      "--gpus",
+      "2",
+      "--ctx",
+      "8k",
+    ]);
+    expect(explicit.code).toBe(EXIT_DOES_NOT_FIT);
   });
 });

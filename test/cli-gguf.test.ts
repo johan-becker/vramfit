@@ -94,12 +94,28 @@ describe("vramfit check <path>.gguf", () => {
     expect(other.config["quant"]).toBe("q8_0");
   });
 
-  it("ranks requantizations of a file with best", () => {
+  it("ranks requantizations of a file from the format the file is in", () => {
     const { code, io } = withLlama(["best", LLAMA_PATH, "-d", "4090", "--ctx", "8k"]);
     expect(code).toBe(EXIT_OK);
     expect(io.output).toMatch(/Meta Llama 3\.1 8B Instruct {2}\| {2}NVIDIA RTX 4090/);
     expect(io.output).toMatch(/Read from \.\/models\//);
-    expect(io.output).toMatch(/^Q4_K_M\s+4\.83/m);
+    // The file's own row, at the bits per weight measured from its tensor
+    // table rather than the nominal 4.83 the table lists for the name. The
+    // nominal figure had `best` report 4.62 GiB of weights where `check`
+    // reported 4.82 GiB for the same file.
+    expect(io.output).toMatch(/^Q4_K_M\s+5\.10\s+4\.82 GiB/m);
+    // You cannot get F16 out of a Q4_K_M file, and every quantization wider
+    // than the file is a bigger file holding the same weights.
+    expect(io.output).not.toMatch(/^(F16|BF16|Q8_0|Q6_K|Q5_K_M|Q5_K_S)\s/m);
+    expect(io.output).toMatch(/is on disk as Q4_K_M, so that is the best quality/);
+    expect(io.output).toMatch(/Recommended: Q4_K_M/);
+  });
+
+  it("names the file's own format as the best quant that fits", () => {
+    const { io } = withLlama(["check", LLAMA_PATH, "-d", "4090", "--ctx", "32k"]);
+    expect(io.output).toMatch(/Best quant that fits at 32K\s+Q4_K_M\s+4\.82 GiB of weights/);
+    // The same weight figure the Memory block above it gives for the file.
+    expect(io.output).toMatch(/Weights\s+4\.82 GiB/);
   });
 
   it("reads a mixture of experts out of a file", () => {
@@ -140,6 +156,37 @@ describe("vramfit check <path> diagnostics", () => {
     });
     expect(code).toBe(EXIT_USAGE);
     expect(io.errors).toMatch(/\.\/notes\.gguf: not a GGUF file: it starts with "just"/);
+  });
+
+  it("refuses two model sources instead of quietly preferring one", () => {
+    // The same ground --json with --markdown is refused on: preferring one
+    // silently answers a question that was not asked, and here the answer is
+    // a verdict for a different model.
+    const both = new FakeIo({ binary: { [LLAMA_PATH]: llamaGgufBytes() } });
+    expect(run(["check", "llama-3.3-70b", "--gguf", LLAMA_PATH, "-d", "4090"], both)).toBe(
+      EXIT_USAGE,
+    );
+    expect(both.errors).toMatch(
+      /the model "llama-3\.3-70b" and --gguf \.\/models\/.*\.gguf are different models; pick one/,
+    );
+    expect(both.stdout).toEqual([]);
+
+    const flags = new FakeIo({ binary: { [LLAMA_PATH]: llamaGgufBytes() } });
+    expect(
+      run(["check", "--gguf", LLAMA_PATH, "--hf-config", "./Qwen3-30B-A3B", "-d", "4090"], flags),
+    ).toBe(EXIT_USAGE);
+    expect(flags.errors).toMatch(/--gguf .* and --hf-config \.\/Qwen3-30B-A3B are different/);
+  });
+
+  it("names a directory pointed at the GGUF reader", () => {
+    // A directory opens and stats happily on macOS and Linux, so the failure
+    // came out of the first read as a bare EISDIR: no path, and none of the
+    // "Try vramfit --help" every other usage error carries.
+    const io = new FakeIo({ directories: ["./Qwen3-30B-A3B"] });
+    expect(run(["check", "--gguf", "./Qwen3-30B-A3B", "-d", "4090"], io)).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/\.\/Qwen3-30B-A3B: not a GGUF file: it is a directory/);
+    expect(io.errors).toMatch(/Try "vramfit --help"/);
+    expect(io.errors).not.toMatch(/EISDIR/);
   });
 
   it("refuses a path whose format it does not read", () => {
