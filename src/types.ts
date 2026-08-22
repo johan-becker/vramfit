@@ -87,6 +87,13 @@ export interface ModelSpec {
   defaultCtx: number;
   /** Where the numbers came from, so they can be audited. */
   source: string;
+  /**
+   * The quantization the checkpoint is released in, when it is released in
+   * one. gpt-oss ships as MXFP4: a wider quantization of it is a bigger file
+   * holding the same 4.25-bit weights, so the native format is the highest
+   * quality on offer and the tables treat it that way.
+   */
+  nativeQuant?: string;
   notes?: string;
 }
 

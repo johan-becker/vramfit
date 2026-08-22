@@ -48,6 +48,26 @@ describe("parseArgv", () => {
     expect(() => parseArgv(["-z"])).toThrow(/Unknown option "-z"/);
   });
 
+  it("does not let a value-less flag swallow the next argument", () => {
+    // Flag-before-positional is normal GNU-style ordering, and --json takes no
+    // value: reading one left `vramfit check --json llama-3.1-8b` with no
+    // model and a json flag set to "llama-3.1-8b".
+    const parsed = parseArgv(["check", "--json", "llama-3.1-8b", "-d", "4090"]);
+    expect(parsed.flags.get("json")).toBe(true);
+    expect(parsed.positionals).toEqual(["check", "llama-3.1-8b"]);
+
+    expect(parseArgv(["--help", "check"]).positionals).toEqual(["check"]);
+    expect(parseArgv(["-v", "check"]).flags.get("version")).toBe(true);
+    expect(parseArgv(["-v", "check"]).positionals).toEqual(["check"]);
+    expect(parseArgv(["--flash-attn", "llama-3.1-8b"]).positionals).toEqual(["llama-3.1-8b"]);
+  });
+
+  it("still reads a value-less flag's value in the inline and no- forms", () => {
+    expect(parseArgv(["--json=false"]).flags.get("json")).toBe("false");
+    expect(parseArgv(["--no-json"]).flags.get("json")).toBe(false);
+    expect(parseArgv(["--flash-attn=off"]).flags.get("flash-attn")).toBe("off");
+  });
+
   it("lower-cases flag names so --CTX works", () => {
     expect(parseArgv(["--CTX", "8192"]).flags.get("ctx")).toBe("8192");
   });

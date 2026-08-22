@@ -23,6 +23,21 @@ if (!existsSync(bin)) {
   process.exit(1);
 }
 
+/**
+ * One end-to-end case: the argv to run, the exit code to expect, and patterns
+ * the output has to match (or, for rejectStderr, must not).
+ *
+ * @typedef {object} SmokeCase
+ * @property {string} name
+ * @property {string[]} argv
+ * @property {number} exit
+ * @property {RegExp[]} [expect]
+ * @property {RegExp[]} [expectStderr]
+ * @property {RegExp[]} [rejectStderr]
+ * @property {(payload: any) => void} [json]
+ */
+
+/** @type {SmokeCase[]} */
 const cases = [
   {
     name: "check, fits",
@@ -66,6 +81,14 @@ const cases = [
     exit: 0,
     expect: [/Recommended: Q4_K_M/, /^Q4_K_M\s+4\.83/m],
   },
+  {
+    // "nothing in this range fits" is exit 1, the same code as check's, and
+    // the README's command table says so.
+    name: "best, nothing fits",
+    argv: ["best", "llama-3.3-70b", "-d", "3060"],
+    exit: 1,
+    expect: [/Nothing in this range fits/],
+  },
   { name: "devices", argv: ["devices"], exit: 0, expect: [/^rtx-4090\s+NVIDIA RTX 4090/m] },
   { name: "models", argv: ["models"], exit: 0, expect: [/^llama-3\.1-8b/m] },
   { name: "help", argv: ["--help"], exit: 0, expect: [/USAGE/] },
@@ -81,6 +104,26 @@ const cases = [
     argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctxx", "8k"],
     exit: 2,
     expectStderr: [/Unknown option "--ctxx"/],
+  },
+  {
+    // A bad --version used to escape the CLI's own error handling and be
+    // reported by Node as an uncaught exception with exit 1 -- the code that
+    // means "does not fit" to a deploy gate.
+    name: "misused --version is a usage error, not a crash",
+    argv: ["-v", "check"],
+    exit: 2,
+    expectStderr: [/^vramfit: /m],
+    rejectStderr: [/^\s+at /m, /UsageError:/],
+  },
+  {
+    name: "flag before the model name",
+    argv: ["check", "--json", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"],
+    exit: 0,
+    json: (payload) => {
+      if (payload.model.id !== "llama-3.1-8b") {
+        throw new Error(`--json before the model lost it: ${JSON.stringify(payload.model)}`);
+      }
+    },
   },
 ];
 
@@ -100,11 +143,14 @@ for (const testCase of cases) {
   for (const pattern of testCase.expectStderr ?? []) {
     if (!pattern.test(result.stderr)) problems.push(`stderr did not match ${pattern}`);
   }
+  for (const pattern of testCase.rejectStderr ?? []) {
+    if (pattern.test(result.stderr)) problems.push(`stderr matched ${pattern}, which it must not`);
+  }
   if (testCase.json) {
     try {
       testCase.json(JSON.parse(result.stdout));
     } catch (cause) {
-      problems.push(`json: ${cause.message}`);
+      problems.push(`json: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
 
@@ -120,7 +166,7 @@ for (const testCase of cases) {
 
 // The library entry point has to load from the build too, and it is the one
 // that reads the bundled JSON relative to its own compiled location.
-const library = await import(new URL("../dist/index.js", import.meta.url));
+const library = await import(new URL("../dist/index.js", import.meta.url).href);
 if (library.listModels().length < 20 || library.listDevices().length < 20) {
   console.error("FAIL  library entry point: bundled database did not load from dist");
   failures++;

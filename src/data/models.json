@@ -642,6 +642,7 @@
       "maxCtx": 131072,
       "defaultCtx": 8192,
       "source": "openai/gpt-oss-20b config.json",
+      "nativeQuant": "mxfp4",
       "notes": "Ships natively in MXFP4; the expert tensors are 4.25 bpw while embeddings stay BF16."
     },
     {
@@ -678,6 +679,7 @@
       "maxCtx": 131072,
       "defaultCtx": 8192,
       "source": "openai/gpt-oss-120b config.json",
+      "nativeQuant": "mxfp4",
       "notes": "Ships natively in MXFP4; the expert tensors are 4.25 bpw while embeddings stay BF16."
     }
   ]

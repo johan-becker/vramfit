@@ -82,15 +82,17 @@ MODEL AND DEVICE
       --device-json <path> Use a device spec from a JSON file instead.
 
 CONFIGURATION
-  -q, --quant <id>         Weight quantization (default q4_k_m). f16, q8_0,
-                           q6_k, q5_k_m, q4_k_m, q4_k_s, q3_k_m, q2_k, mxfp4,
+  -q, --quant <id>         Weight quantization. Defaults to the format the
+                           model ships in, else q4_k_m. f16, q8_0, q6_k,
+                           q5_k_m, q4_k_m, q4_k_s, q3_k_m, q2_k, mxfp4,
                            awq-4bit, gptq-4bit and friends.
   -c, --ctx <n>            Context length; accepts 32768 or 32k. Defaults to
                            the model's own default.
   -b, --batch <n>          Concurrent sequences (default 1).
       --kv-quant <id>      KV cache type: f16, q8_0, q5_1, q5_0, q4_1, q4_0.
   -g, --gpus <n>           Identical devices sharing the model (default 1).
-      --vram <GiB>         Override the device's memory, per device.
+      --vram <GiB>         Usable memory per device, used as given. Not
+                           scaled by the device's usable fraction.
       --ubatch <n>         Physical batch, llama.cpp --ubatch-size (default 512).
       --no-flash-attn      Model the compute buffer without flash attention.
       --prompt <n>         Prompt length for time-to-first-token.
@@ -100,7 +102,7 @@ OFFLOAD (used when the model does not fit)
       --ram-bandwidth <GB/s>   System RAM bandwidth (default 89.6, DDR5-5600).
       --cpu-tflops <n>     CPU dense FP16 throughput, for offloaded prefill.
 
-CALIBRATION
+CALIBRATION (device side only; offloaded layers keep their derived figures)
       --efficiency <0-1>       Override the memory-bandwidth efficiency.
       --prefill-efficiency <0-1>  Override the prefill MFU.
 
@@ -154,7 +156,14 @@ function loadJsonFile<T>(
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (cause) {
-    throw new UsageError(`${path} is not valid JSON: ${(cause as Error).message}`);
+    // V8's JSON.parse message quotes the first bytes of the input, so passing
+    // it through would print the head of whatever file was named -- a mistyped
+    // path in a CI step should not echo a secrets file into the build log.
+    // Keep the position it reports, drop the excerpt.
+    const at = /in JSON at (position \d+(?: \(line \d+ column \d+\))?)/.exec(
+      (cause as Error).message,
+    );
+    throw new UsageError(`${path} is not valid JSON${at ? ` (${at[1]})` : ""}`);
   }
   return parse(parsed, path);
 }
@@ -212,6 +221,23 @@ function fitOptions(args: Args): FitOptions {
   return options;
 }
 
+/**
+ * Refuse a positional the command has no use for.
+ *
+ * The parser gives value-less flags no separate value, so `--flash-attn false`
+ * leaves "false" standing on its own. Ignoring it would silently answer a
+ * different question from the one that was typed, which is the failure mode
+ * the whole parser is written to avoid.
+ */
+function assertNoExtraArguments(args: Args, command: string, allowed: number): void {
+  const extra = args.positionals[allowed];
+  if (extra === undefined) return;
+  const takes = allowed > 1 ? "one model name" : "no arguments";
+  throw new UsageError(
+    `Unexpected argument "${extra}". "${command}" takes ${takes}; a flag that carries a value needs it as --flag=value or --flag value.`,
+  );
+}
+
 function emit(io: Io, lines: readonly string[]): void {
   io.out(lines.join("\n"));
 }
@@ -222,10 +248,14 @@ function emitJson(io: Io, payload: unknown): void {
 
 function runCheck(args: Args, io: Io, version: string): number {
   args.assertKnown([...SHARED_FLAGS, "quant"]);
+  assertNoExtraArguments(args, "check", 2);
 
   const model = resolveModel(args, io);
   const device = resolveDevice(args, io);
-  const quant = getQuant(args.string("quant") ?? "q4_k_m");
+  // A model released in its own quantization is checked in that format unless
+  // the user asks for another: modelling gpt-oss at Q4_K_M describes a file
+  // nobody publishes.
+  const quant = getQuant(args.string("quant") ?? model.nativeQuant ?? "q4_k_m");
   const options = fitOptions(args);
 
   const fit = checkFit(model, quant, device, options);
@@ -241,6 +271,7 @@ function runCheck(args: Args, io: Io, version: string): number {
 
 function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
+  assertNoExtraArguments(args, "best", 2);
 
   const model = resolveModel(args, io);
   const device = resolveDevice(args, io);
@@ -258,6 +289,7 @@ function runBest(args: Args, io: Io, version: string): number {
 
 function runList(args: Args, io: Io, kind: "devices" | "models"): number {
   args.assertKnown(["json", "help"]);
+  assertNoExtraArguments(args, kind, 1);
   const asJson = args.boolean("json") === true;
 
   if (kind === "devices") {
@@ -271,30 +303,30 @@ function runList(args: Args, io: Io, kind: "devices" | "models"): number {
   return EXIT_OK;
 }
 
-/** Parse, dispatch, and turn any failure into a usage message and exit code. */
+/**
+ * Parse, dispatch, and turn any failure into a usage message and exit code.
+ *
+ * Everything after `readVersion` is inside the one try/catch, including the
+ * --version and --help reads: `args.boolean` throws on a value it cannot make
+ * sense of, and an escaped throw would leave Node to print a stack trace and
+ * exit 1 -- the code that means "does not fit" to a deploy gate.
+ */
 export function run(argv: readonly string[], io: Io = defaultIo): number {
   const version = readVersion();
-  let args: Args;
-  try {
-    args = Args.parse(argv);
-  } catch (error) {
-    io.err(`vramfit: ${(error as Error).message}`);
-    io.err('Try "vramfit --help".');
-    return EXIT_USAGE;
-  }
-
-  const command = args.positionals[0];
-
-  if (args.boolean("version") === true && command === undefined) {
-    io.out(version);
-    return EXIT_OK;
-  }
-  if (command === undefined || command === "help" || args.boolean("help") === true) {
-    io.out(HELP);
-    return command === undefined && args.boolean("help") !== true ? EXIT_USAGE : EXIT_OK;
-  }
 
   try {
+    const args = Args.parse(argv);
+    const command = args.positionals[0];
+
+    if (args.boolean("version") === true && command === undefined) {
+      io.out(version);
+      return EXIT_OK;
+    }
+    if (command === undefined || command === "help" || args.boolean("help") === true) {
+      io.out(HELP);
+      return command === undefined && args.boolean("help") !== true ? EXIT_USAGE : EXIT_OK;
+    }
+
     switch (command) {
       case "check":
         return runCheck(args, io, version);

@@ -113,6 +113,117 @@ describe("vramfit check", () => {
     expect(io.output).toMatch(/Largest context that fits\s+128K/);
   });
 
+  it("annotates time to first token with the prompt it was computed from", () => {
+    // The figure comes from --prompt when given, so the note beside it has to
+    // say so: labelling a 128-token prefill "for a prompt of 32K tokens" is
+    // wrong by a factor of 256 against the number it explains.
+    const long = invoke(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "32k"]).io.output;
+    expect(long).toMatch(/Time to first token\s+13\.\d s\s+for a prompt of 32K tokens/);
+
+    const short = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "4090",
+      "--ctx",
+      "32k",
+      "--prompt",
+      "128",
+    ]).io.output;
+    expect(short).toMatch(/Time to first token\s+\d+ ms\s+for a prompt of 128 tokens/);
+
+    const payload = JSON.parse(
+      invoke(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "32k", "--prompt", "128", "--json"])
+        .io.output,
+    ) as { throughput: { promptTokens: number; timeToFirstTokenSeconds: number } };
+    expect(payload.throughput.promptTokens).toBe(128);
+    expect(payload.throughput.timeToFirstTokenSeconds).toBeLessThan(1);
+  });
+
+  it("turns a malformed --version or --help into exit 2, never a crash", () => {
+    // Both were read outside the try/catch, so `vramfit -v check` printed a
+    // raw V8 stack trace and exited 1 -- the code a deploy gate reads as
+    // "does not fit". A usage mistake has to stay a usage mistake.
+    for (const argv of [
+      ["-v", "check"],
+      ["--version=abc"],
+      ["check", "llama-3.1-8b", "-d", "4090", "--help=x"],
+    ]) {
+      const { code, io } = invoke(argv);
+      expect(code, argv.join(" ")).toBe(EXIT_USAGE);
+      expect(io.errors, argv.join(" ")).toMatch(/^vramfit: /);
+      expect(io.output, argv.join(" ")).toBe("");
+    }
+  });
+
+  it("prints help for --help wherever it appears, and exits 0", () => {
+    const early = invoke(["--help", "check"]);
+    expect(early.code).toBe(EXIT_OK);
+    expect(early.io.output).toMatch(/USAGE/);
+    expect(early.io.errors).toBe("");
+
+    const late = invoke(["check", "llama-3.1-8b", "--help"]);
+    expect(late.code).toBe(EXIT_OK);
+    expect(late.io.output).toMatch(/USAGE/);
+  });
+
+  it("accepts a value-less flag before the model, as every other CLI does", () => {
+    const { code, io } = invoke(["check", "--json", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"]);
+    expect(code).toBe(EXIT_OK);
+    const payload = JSON.parse(io.output) as { model: { id: string } };
+    expect(payload.model.id).toBe("llama-3.1-8b");
+  });
+
+  it("refuses an argument the command has no meaning for", () => {
+    // --flash-attn takes no separate value, so "false" here is a stray word.
+    // Silently ignoring it would answer a question the user did not ask.
+    const { code, io } = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "4090",
+      "--flash-attn",
+      "false",
+    ]);
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/Unexpected argument "false"/);
+    expect(io.errors).toMatch(/--flag=value/);
+
+    expect(invoke(["models", "extra"]).code).toBe(EXIT_USAGE);
+  });
+
+  it("reports a --vram override as the whole usable budget", () => {
+    const capped = invoke(["check", "llama-3.1-8b", "-d", "m4-max", "--ctx", "8k"]).io.output;
+    expect(capped).toMatch(/Available\s+96\.00 GiB\s+Apple M4 Max, 75% of 128 GiB wirable/);
+    expect(capped).toMatch(/iogpu\.wired_limit_mb/);
+
+    const raised = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "m4-max",
+      "--vram",
+      "120",
+      "--ctx",
+      "8k",
+    ]).io.output;
+    expect(raised).toMatch(/Available\s+120\.00 GiB\s+Apple M4 Max\s*$/m);
+    expect(raised).not.toMatch(/wirable/);
+    // The user has already told us their budget; repeating the how-to-raise-it
+    // advice would be telling them to do what they have just done.
+    expect(raised).not.toMatch(/iogpu\.wired_limit_mb/);
+  });
+
+  it("checks a natively-quantized model in the format it ships in", () => {
+    const { io } = invoke(["check", "gpt-oss-20b", "-d", "4090", "--ctx", "8k"]);
+    expect(io.output).toMatch(/gpt-oss 20B {2}\| {2}MXFP4/);
+    expect(io.output).toMatch(/Weights\s+11\.9\d GiB/);
+    // An explicit --quant still wins: the tool answers the question asked.
+    expect(invoke(["check", "gpt-oss-20b", "-d", "4090", "-q", "q8_0"]).io.output).toMatch(
+      /gpt-oss 20B {2}\| {2}Q8_0/,
+    );
+  });
+
   it("describes latent attention and sliding windows in the cache line", () => {
     expect(invoke(["check", "deepseek-v2-lite", "-d", "4090"]).io.output).toMatch(
       /27 layers x 576-wide latent \(MLA\)/,
@@ -185,6 +296,26 @@ describe("vramfit check", () => {
     expect(memory.capacityBytes - memory.totalBytes).toBeCloseTo(memory.headroomBytes, 6);
   });
 
+  it("keeps the top-level JSON keys the README documents", () => {
+    // README section 6.4 lists these; the payload calls itself stable, so the
+    // set is pinned here rather than left to drift away from the docs.
+    const payload = JSON.parse(
+      invoke(["check", "llama-3.1-8b", "-d", "4090", "--json"]).io.output,
+    ) as Record<string, unknown>;
+    expect(Object.keys(payload)).toEqual([
+      "vramfit",
+      "fits",
+      "model",
+      "device",
+      "config",
+      "memory",
+      "capacity",
+      "throughput",
+      "offload",
+      "warnings",
+    ]);
+  });
+
   it("reports the offload split in JSON too", () => {
     const { code, io } = invoke([
       "check",
@@ -224,6 +355,22 @@ describe("vramfit check", () => {
     expect(io.errors).toMatch(/model\.json\.nKvHeads must divide nHeads \(40\) evenly/);
   });
 
+  it("refuses a spec whose parameter count contradicts its architecture", () => {
+    // The 1000x slip that used to produce "FITS - 2.55 GiB of 24.00 GiB used"
+    // and exit 0 for a model that needs 4.62 GiB of weights alone.
+    const typo = JSON.stringify({
+      ...(JSON.parse(CUSTOM_MODEL) as Record<string, unknown>),
+      totalParams: 13_000_000,
+      activeParams: 13_000_000,
+    });
+    const { code, io } = invoke(["check", "--model-json", "model.json", "-d", "4090"], {
+      "model.json": typo,
+    });
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/model\.json\.totalParams is 13000000/);
+    expect(io.output).toBe("");
+  });
+
   it("reports an unreadable or malformed file clearly", () => {
     expect(invoke(["check", "--model-json", "missing.json", "-d", "4090"]).io.errors).toMatch(
       /Cannot read missing\.json/,
@@ -232,6 +379,19 @@ describe("vramfit check", () => {
       invoke(["check", "--model-json", "bad.json", "-d", "4090"], { "bad.json": "{oops" }).io
         .errors,
     ).toMatch(/bad\.json is not valid JSON/);
+  });
+
+  it("names the file that would not parse without quoting what is in it", () => {
+    // A mistyped path in a CI step must not echo the head of whatever file was
+    // named into the build log; V8's own JSON.parse message quotes the first
+    // ten bytes of the input.
+    const { code, io } = invoke(["check", "--model-json", "secrets.env", "-d", "4090"], {
+      "secrets.env": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG\n",
+    });
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/secrets\.env is not valid JSON/);
+    expect(io.errors).not.toMatch(/AWS_SECRET/);
+    expect(io.errors).not.toMatch(/wJalrXUtnFEMI/);
   });
 });
 
@@ -245,6 +405,15 @@ describe("vramfit best", () => {
     expect(io.output).toMatch(/Recommended: Q8_0 -- highest quality that fits at 16K/);
   });
 
+  it("says why a natively-quantized model has a shorter table", () => {
+    const { code, io } = invoke(["best", "gpt-oss-20b", "-d", "4090", "--ctx", "8k"]);
+    expect(code).toBe(EXIT_OK);
+    expect(io.output).toMatch(/^MXFP4\s+4\.25/m);
+    expect(io.output).not.toMatch(/^Q8_0/m);
+    expect(io.output).toMatch(/Recommended: MXFP4/);
+    expect(io.output).toMatch(/ships in MXFP4/);
+  });
+
   it("lists candidates best quality first", () => {
     const { io } = invoke(["best", "mistral-7b", "-d", "4090"]);
     const quantColumn = io.output
@@ -253,6 +422,26 @@ describe("vramfit best", () => {
       .map((line) => line.split(/\s+/)[0]);
     expect(quantColumn.slice(0, 4)).toEqual(["F16", "BF16", "Q8_0", "Q6_K"]);
     expect(quantColumn.at(-1)).toBe("Q2_K");
+  });
+
+  it("marks rows whose offload needs more system RAM than is assumed", () => {
+    // The table's own footnote says a row that does not fit shows "what you
+    // would actually get". For F16 on a 4090 that is nothing at all: the
+    // remainder needs 40.5 GiB of host RAM against the 32 GiB assumed.
+    const { io } = invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k"]);
+    expect(io.output).toMatch(/^F16\s+16\.00\s+\S+ GiB\s+\S+ GiB\s+no\s+-\s+[\d.]+ tok\/s \*$/m);
+    expect(io.output).toMatch(/^Q4_K_M\s.*\s+yes\s+\S+\s+[\d.]+ tok\/s$/m);
+    expect(io.output).toMatch(/\* .*system RAM/);
+
+    const payload = JSON.parse(
+      invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k", "--json"]).io.output,
+    ) as { quants: { id: string; offloadFeasible: boolean }[] };
+    expect(payload.quants.find((q) => q.id === "f16")?.offloadFeasible).toBe(false);
+    expect(payload.quants.find((q) => q.id === "q4_k_m")?.offloadFeasible).toBe(true);
+
+    // With enough RAM declared, the same row is unmarked.
+    const roomy = invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k", "--ram", "128"]);
+    expect(roomy.io.output).not.toMatch(/tok\/s \*/);
   });
 
   it("exits 1 and says what to do when nothing fits", () => {

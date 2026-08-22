@@ -7,7 +7,7 @@ import {
   type BlendedCompute,
   type OffloadPlan,
 } from "./offload.js";
-import { GGUF_QUANT_FAMILIES, getKvQuant, quantsByQuality } from "./quant.js";
+import { GGUF_QUANT_FAMILIES, findQuant, getKvQuant, quantsByQuality } from "./quant.js";
 import {
   PREFILL_MFU,
   bandwidthEfficiency,
@@ -50,7 +50,10 @@ export interface FitOptions {
   /** llama.cpp `--ubatch-size`, which sets the compute buffer width. */
   physicalBatch?: number;
   flashAttention?: boolean;
-  /** Per-device memory override in GiB, for a variant the database lacks. */
+  /**
+   * Usable memory per device in GiB, overriding the database. Taken as-is:
+   * the device's `usableFraction` is not applied on top of it.
+   */
   vramGiB?: number;
   /** System RAM available for offloaded layers, GiB. */
   systemRamGiB?: number;
@@ -60,9 +63,13 @@ export interface FitOptions {
   systemComputeTflops?: number;
   /** Prompt length for time-to-first-token. Defaults to the context. */
   promptTokens?: number;
-  /** Override the derived memory-bandwidth efficiency. */
+  /**
+   * Override the derived memory-bandwidth efficiency of the *device*. The
+   * system-RAM side of a partial offload keeps its own derived figure, because
+   * a measurement taken on the GPU says nothing about DDR5 dequantization.
+   */
   efficiency?: number;
-  /** Override the derived prefill MFU. */
+  /** Override the derived prefill MFU of the device, on the same terms. */
   prefillEfficiency?: number;
 }
 
@@ -114,8 +121,19 @@ export interface FitResult {
   warnings: string[];
 }
 
+/**
+ * Allocatable bytes on one device.
+ *
+ * An explicit override is taken as the budget the user says they can actually
+ * allocate, not as another installed figure to scale down. That is what the
+ * Apple entries advertise it as: macOS wires only ~75% of unified memory for
+ * the GPU by default, `sudo sysctl iogpu.wired_limit_mb=N` raises it, and
+ * `--vram N` is how you tell vramfit about the new limit. Re-applying the 75%
+ * to it would leave a user who had configured 180 GiB looking at 135.
+ */
 function usableBytesPerDevice(device: DeviceSpec, vramGiB?: number): number {
-  return (vramGiB ?? device.vramGiB) * GIB * device.usableFraction;
+  if (vramGiB !== undefined) return vramGiB * GIB;
+  return device.vramGiB * GIB * device.usableFraction;
 }
 
 function normalizeGpus(gpus: number | undefined): number {
@@ -193,6 +211,7 @@ function collectWarnings(
   ctx: number,
   gpus: number,
   offload: OffloadResult | null,
+  vramOverridden: boolean,
 ): string[] {
   const warnings: string[] = [];
 
@@ -201,9 +220,9 @@ function collectWarnings(
       `Requested context ${ctx} exceeds ${model.name}'s trained maximum of ${model.maxCtx}; quality degrades beyond it even where memory allows.`,
     );
   }
-  if (device.unifiedMemory && device.family === "metal") {
+  if (device.unifiedMemory && device.family === "metal" && !vramOverridden) {
     warnings.push(
-      `${device.name} shares memory with the OS: only ${Math.round(device.usableFraction * 100)}% is wirable for the GPU by default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N".`,
+      `${device.name} shares memory with the OS: only ${Math.round(device.usableFraction * 100)}% is wirable for the GPU by default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N" and pass the result as --vram.`,
     );
   }
   if (gpus > 1) {
@@ -281,11 +300,15 @@ export function checkFit(
         (device.unifiedMemory ? device.bandwidthGBs : DEFAULT_SYSTEM_RAM_BANDWIDTH_GBS)) *
       GB_DECIMAL;
     const bits = footprint.weights.effectiveBitsPerWeight;
+    // `--efficiency` and `--prefill-efficiency` are calibrated by measuring a
+    // device-resident run, so they override the device side only. Applying
+    // them to the host as well would let a datacenter-grade measurement speed
+    // up DDR5, and the harmonic blend is dominated by exactly that slow side.
     const bandwidth = blendBandwidth(plan, {
       devicePeakBytesPerSecond: device.bandwidthGBs * GB_DECIMAL,
       deviceEfficiency: options.efficiency ?? bandwidthEfficiency(device.family, bits),
       hostPeakBytesPerSecond: hostPeak,
-      hostEfficiency: options.efficiency ?? bandwidthEfficiency("cpu", bits),
+      hostEfficiency: bandwidthEfficiency("cpu", bits),
     });
 
     const compute = blendCompute(plan, {
@@ -293,7 +316,7 @@ export function checkFit(
       deviceEfficiency: options.prefillEfficiency ?? PREFILL_MFU[device.family],
       hostPeakFlopsPerSecond:
         (options.systemComputeTflops ?? DEFAULT_SYSTEM_COMPUTE_TFLOPS) * TFLOP,
-      hostEfficiency: options.prefillEfficiency ?? PREFILL_MFU.cpu,
+      hostEfficiency: PREFILL_MFU.cpu,
     });
 
     const systemRamAvailableBytes = (options.systemRamGiB ?? DEFAULT_SYSTEM_RAM_GIB) * GIB;
@@ -332,7 +355,15 @@ export function checkFit(
     throughput,
     offload,
     maxContext: maxContextFor(model, quant, device, options),
-    warnings: collectWarnings(model, quant, device, ctx, gpus, offload),
+    warnings: collectWarnings(
+      model,
+      quant,
+      device,
+      ctx,
+      gpus,
+      offload,
+      options.vramGiB !== undefined,
+    ),
   };
 }
 
@@ -354,14 +385,35 @@ export interface QuantSearchOptions extends FitOptions {
   families?: ReadonlySet<string>;
 }
 
+/**
+ * The quantizations worth considering for one model.
+ *
+ * Normally that is an ecosystem: the GGUF families, best quality first. A
+ * model released in a quantization of its own -- gpt-oss ships as MXFP4 -- is
+ * different. Its native format is the best quality that exists for it, and a
+ * wider requantization is a larger file holding exactly the same weights, so
+ * the candidates are the native format and the narrower ones, in that order.
+ */
+function candidateQuants(model: ModelSpec, options: QuantSearchOptions): QuantSpec[] {
+  const families = options.families ?? GGUF_QUANT_FAMILIES;
+  const ranked = quantsByQuality(families);
+  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
+  if (native === undefined) return ranked;
+  return [
+    native,
+    ...ranked.filter(
+      (quant) => quant.id !== native.id && quant.bitsPerWeight < native.bitsPerWeight,
+    ),
+  ];
+}
+
 /** Every candidate quantization, best quality first, each fully evaluated. */
 export function evaluateQuants(
   model: ModelSpec,
   device: DeviceSpec,
   options: QuantSearchOptions = {},
 ): QuantOption[] {
-  const families = options.families ?? GGUF_QUANT_FAMILIES;
-  return quantsByQuality(families).map((quant) => {
+  return candidateQuants(model, options).map((quant) => {
     const fit = checkFit(model, quant, device, options);
     return {
       quant,

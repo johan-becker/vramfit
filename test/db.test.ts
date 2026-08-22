@@ -43,7 +43,10 @@ function validModel(): Record<string, unknown> {
     nHeads: 32,
     nKvHeads: 8,
     headDim: 128,
-    ffnHidden: 11_008,
+    // The architecture has to add up to totalParams below: 32 layers of
+    // 41.9M attention plus 3 x 4096 x 13824 of FFN, plus two 32000 x 4096
+    // vocabulary matrices, is 7.04B.
+    ffnHidden: 13_824,
     vocabSize: 32_000,
     tiedEmbeddings: false,
     attention: "gqa",
@@ -92,6 +95,17 @@ describe("bundled model database", () => {
       expect(ids, `missing ${required}`).toContain(required);
     }
     expect(MODELS.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it("declares the format the natively-quantized models ship in", () => {
+    for (const model of MODELS) {
+      const native = model.nativeQuant;
+      if (model.id.startsWith("gpt-oss")) {
+        expect(native, model.id).toBe("mxfp4");
+      } else {
+        expect(native, model.id).toBeUndefined();
+      }
+    }
   });
 
   it("reconstructs every published parameter count from the architecture", () => {
@@ -362,6 +376,27 @@ describe("validation", () => {
       /moe must be present, use null when it does not apply/,
     ],
     [
+      "a layer count no transformer has",
+      (raw) => {
+        raw["nLayers"] = 20_000_000;
+      },
+      /nLayers must be at most 4096/,
+    ],
+    [
+      "a vocabulary larger than any tokenizer",
+      (raw) => {
+        raw["vocabSize"] = 2 ** 30;
+      },
+      /vocabSize must be at most/,
+    ],
+    [
+      "a name carrying terminal escape sequences",
+      (raw) => {
+        raw["name"] = "Unit\u001B[31m\u001B[2J\nFITS  -  0.00 GiB of 99.00 GiB used";
+      },
+      /name must not contain control characters/,
+    ],
+    [
       "a router that picks more experts than exist",
       (raw) => {
         raw["moe"] = {
@@ -386,6 +421,66 @@ describe("validation", () => {
       expect(() => parseModelSpec(raw)).toThrow(SpecValidationError);
     });
   }
+
+  it("rejects a parameter count the architecture cannot account for", () => {
+    // A 1000x slip is the likeliest error in a hand-written spec, and it used
+    // to pass: computeWeightBytes clamped the negative block count to zero and
+    // the report printed "0.70 GiB, 8M params at 745.13 effective bits/weight"
+    // with a cheerful FITS and exit 0.
+    const raw = validModel();
+    raw["totalParams"] = 7_000_000;
+    raw["activeParams"] = 7_000_000;
+    expect(() => parseModelSpec(raw, "my-model.json")).toThrow(
+      /my-model\.json\.totalParams is 7000000, but the architecture describes/,
+    );
+    expect(() => parseModelSpec(raw)).toThrow(SpecValidationError);
+  });
+
+  it("still accepts a parameter count rounded the way model cards round them", () => {
+    const raw = validModel();
+    raw["totalParams"] = 7_000_000_000;
+    raw["activeParams"] = 7_000_000_000;
+    expect(parseModelSpec(raw).totalParams).toBe(7_000_000_000);
+  });
+
+  it("rejects an active-parameter count the router cannot produce", () => {
+    const raw = JSON.parse(JSON.stringify(getModel("mixtral-8x7b"))) as Record<string, unknown>;
+    // 2 of 8 experts is 12.88B active, whatever you count the vocabulary as;
+    // 42B is the figure you get from mistaking active for total.
+    raw["activeParams"] = 42_000_000_000;
+    expect(() => parseModelSpec(raw, "moe.json")).toThrow(
+      /moe\.json\.activeParams is 42000000000, but routing 2 of 8 experts/,
+    );
+    // The published figure itself still passes, vocabulary convention and all.
+    expect(parseModelSpec(JSON.parse(JSON.stringify(getModel("mixtral-8x7b")))).activeParams).toBe(
+      getModel("mixtral-8x7b").activeParams,
+    );
+  });
+
+  it("rejects a device name carrying terminal escape sequences", () => {
+    // A spec pasted from a gist could otherwise clear the screen and print a
+    // forged verdict above the real one: every one of these strings is written
+    // straight into the report.
+    const raw = validDevice();
+    raw["name"] = "Evil\u001B[2J\nFITS  -  0.00 GiB of 99.00 GiB used";
+    expect(() => parseDeviceSpec(raw)).toThrow(/name must not contain control characters/);
+
+    const aliased = validDevice();
+    aliased["aliases"] = ["fine", "not\u0007fine"];
+    expect(() => parseDeviceSpec(aliased)).toThrow(
+      /aliases\[1\] must not contain control characters/,
+    );
+  });
+
+  it("rejects a native quantization the tables do not know", () => {
+    const raw = validModel();
+    raw["nativeQuant"] = "fp3";
+    expect(() => parseModelSpec(raw, "my-model.json")).toThrow(
+      /my-model\.json\.nativeQuant must name a known quantization/,
+    );
+    raw["nativeQuant"] = "mxfp4";
+    expect(parseModelSpec(raw).nativeQuant).toBe("mxfp4");
+  });
 
   it("rejects a device that claims more usable memory than it has", () => {
     const raw = validDevice();

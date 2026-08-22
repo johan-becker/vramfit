@@ -179,7 +179,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M1: LPDDR4X-4266 128-bit = 68.25 GB/s; 8-core GPU, 2.6 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m1-pro",
@@ -192,7 +192,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M1 Pro: 200 GB/s; 16-core GPU, 5.3 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m1-max",
@@ -205,7 +205,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M1 Max: 400 GB/s; 32-core GPU, 10.4 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m1-ultra",
@@ -218,7 +218,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M1 Ultra: 800 GB/s; 64-core GPU, 21.0 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m2",
@@ -231,7 +231,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M2: LPDDR5-6400 128-bit = 100 GB/s; 10-core GPU, 3.6 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m2-pro",
@@ -244,7 +244,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M2 Pro: 200 GB/s; 19-core GPU, 6.8 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m2-max",
@@ -257,7 +257,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M2 Max: 400 GB/s; 38-core GPU, 13.6 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m2-ultra",
@@ -270,7 +270,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M2 Ultra: 800 GB/s; 76-core GPU, 27.2 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m3",
@@ -283,7 +283,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M3: 100 GB/s; 10-core GPU, 4.1 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m3-pro",
@@ -296,7 +296,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M3 Pro: 150 GB/s (narrowed from the M2 Pro's 200); 18-core GPU, 7.4 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m3-max",
@@ -309,7 +309,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M3 Max (16-core CPU / 40-core GPU): 400 GB/s; 16.4 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. The binned 30-core-GPU M3 Max runs a 192-bit bus at 300 GB/s."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given. The binned 30-core-GPU M3 Max runs a 192-bit bus at 300 GB/s."
     },
     {
       "id": "m3-ultra",
@@ -322,7 +322,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M3 Ultra: 819 GB/s; 80-core GPU, 32.8 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. Configurable to 512 GB, which makes it the cheapest way to hold a 400B-class model in one address space."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given. Configurable to 512 GB, which makes it the cheapest way to hold a 400B-class model in one address space."
     },
     {
       "id": "m4",
@@ -335,7 +335,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M4: LPDDR5X-7500 128-bit = 120 GB/s; 10-core GPU, 4.6 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m4-pro",
@@ -348,7 +348,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M4 Pro: 273 GB/s; 20-core GPU, 9.2 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given."
     },
     {
       "id": "m4-max",
@@ -361,7 +361,7 @@
       "unifiedMemory": true,
       "usableFraction": 0.75,
       "source": "Apple M4 Max: 546 GB/s; 40-core GPU, 18.4 FP32 TFLOPS.",
-      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. There is no M4 Ultra: the 2025 Mac Studio pairs the M4 Max with the M3 Ultra."
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, then pass the raised budget as --vram, which is used as given. There is no M4 Ultra: the 2025 Mac Studio pairs the M4 Max with the M3 Ultra."
     },
     {
       "id": "cpu-ddr4-dual",
