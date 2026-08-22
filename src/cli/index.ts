@@ -4,6 +4,12 @@ import { compareDevices, parseDeviceList, type DeviceCandidate } from "../compar
 import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
 import { openByteSource } from "../gguf/index.js";
 import { getQuant } from "../quant.js";
+import {
+  USE_CASE_IDS,
+  findUseCase,
+  recommendModels,
+  type RecommendOptions,
+} from "../recommend.js";
 import type { DeviceSpec, QuantSpec } from "../types.js";
 import { Args, UsageError } from "./args.js";
 import {
@@ -21,11 +27,13 @@ import {
   bestJson,
   checkJson,
   compareJson,
+  recommendJson,
   renderBest,
   renderCheck,
   renderCompare,
   renderDevices,
   renderModels,
+  renderRecommend,
 } from "./report.js";
 
 /**
@@ -93,6 +101,7 @@ USAGE
   vramfit check <model> --device <device> [options]
   vramfit best  <model> --device <device> [options]
   vramfit compare <model> --devices <list> [options]
+  vramfit recommend --device <device> [options]
   vramfit devices [--json]
   vramfit models  [--json]
 
@@ -103,6 +112,8 @@ COMMANDS
             and the decode speed each one leaves room for.
   compare   One model across several devices: fits, headroom, largest
             context and decode speed, best first.
+  recommend What to run on the hardware you have: every bundled model that
+            fits, ranked, each with the trade-off it asks of you.
   devices   List the bundled devices.
   models    List the bundled models.
 
@@ -149,6 +160,12 @@ CALIBRATION (device side only; offloaded layers keep their derived figures)
       --efficiency <0-1>       Override the memory-bandwidth efficiency.
       --prefill-efficiency <0-1>  Override the prefill MFU.
 
+RECOMMEND
+      --use-case <id>      chat, code or long-context. Sets the context to
+                           check at and the decode speed to clear (default
+                           chat: 8K and 15 tok/s).
+      --limit <n>          Show only the top n models.
+
 OUTPUT
       --json               Machine-readable output.
   -h, --help               This text.
@@ -159,6 +176,7 @@ EXAMPLES
   vramfit check llama-3.3-70b -d 3090 -g 2 -q q4_k_m --ctx 8k
   vramfit best qwen2.5-32b --device m3-max
   vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra
+  vramfit recommend -d m4-max --use-case code
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
   vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
@@ -385,6 +403,36 @@ function runCompare(args: Args, io: Io, version: string): number {
   return rows.some((row) => row.fit.fits) ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
+function runRecommend(args: Args, io: Io, version: string): number {
+  args.assertKnown([...SHARED_FLAGS, "use-case", "limit"]);
+  assertNoExtraArguments(args, "recommend", 1);
+
+  const device = resolveDevice(args, io);
+  const requested = args.string("use-case") ?? "chat";
+  const profile = findUseCase(requested);
+  if (profile === undefined) {
+    throw new UsageError(
+      `Unknown use case "${requested}". Expected one of ${USE_CASE_IDS.join(", ")}.`,
+    );
+  }
+
+  const base = fitOptions(args);
+  const options: RecommendOptions = { ...base, useCase: profile.id };
+  const limit = args.number("limit", { integer: true, min: 1 });
+  if (limit !== undefined) options.limit = limit;
+
+  const ctx = base.ctx ?? profile.defaultContext;
+  const gpus = base.gpus ?? 1;
+  const rows = recommendModels(device, options);
+
+  if (args.boolean("json") === true) {
+    emitJson(io, recommendJson(device, profile, rows, ctx, gpus, version));
+  } else {
+    emit(io, renderRecommend(device, profile, rows, ctx, gpus));
+  }
+  return rows.length > 0 ? EXIT_OK : EXIT_DOES_NOT_FIT;
+}
+
 function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
   assertNoExtraArguments(args, "best", 2);
@@ -451,6 +499,8 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return runBest(args, io, version);
       case "compare":
         return runCompare(args, io, version);
+      case "recommend":
+        return runRecommend(args, io, version);
       case "devices":
         return runList(args, io, "devices");
       case "models":
@@ -460,7 +510,7 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return EXIT_OK;
       default:
         throw new UsageError(
-          `Unknown command "${command}". Expected check, best, compare, devices, models or help.`,
+          `Unknown command "${command}". Expected check, best, compare, recommend, devices, models or help.`,
         );
     }
   } catch (error) {
