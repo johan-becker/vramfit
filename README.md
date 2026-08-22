@@ -338,6 +338,8 @@ HuggingFace checkpoint directory. Both are read from their own headers.
 | `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
 | `--limit <n>` | `recommend` only: show the top n |
 | `--config <path>` | `fleet` only: the JSON description of the machines and the models |
+| `--launcher [runtime]` | Print the exact flags this fit implies: `llama.cpp`, `ollama`, `vllm`, or all three |
+| `--ngl` | Print only the llama.cpp `-ngl` value and exit, for a shell substitution |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
@@ -393,6 +395,11 @@ keep their name and meaning.
 | `throughput` | `decodeTokensPerSecond`, `aggregateDecodeTokensPerSecond`, `prefillTokensPerSecond`, `promptTokens`, `timeToFirstTokenSeconds`, `decodeErrorBand`, `prefillErrorBand` |
 | `offload` | `null` when the model is fully resident, otherwise `gpuLayers`, `cpuLayers`, `vocabOnDevice`, `systemRamRequiredBytes`, `systemRamAvailableBytes`, `feasible`, `blendedBandwidthBytesPerSecond` |
 | `warnings` | The strings the report prints under *Notes* |
+
+`--launcher` adds a `launcher` key to `check --json` — `llamaCpp`, `ollama`
+and `vllm`, each with its own fields plus an `args` array and a `command`
+string, and the `notes` the report prints beside them. The key is absent
+without the flag.
 
 `vramfit compare --json` returns `vramfit`, `model`, `config`, `best` (a
 device id or `null`) and `devices[]` in the table's own order, each with
@@ -694,6 +701,71 @@ entry is a name or a path, so a fleet file can mix the bundled database with
 the checkpoints actually sitting on those machines. `fleet` exits **1** when
 any model fits nowhere, which is what makes it useful in CI.
 
+### 6.8 The flags to actually type
+
+Everything else here answers *will it fit*. `--launcher` answers *then what do
+I run*, which is the step where the arithmetic usually gets thrown away and
+replaced by `-ngl 99` and a shrug. Nothing new is computed: the layer count,
+the context and the memory fraction are already decided by the time the
+verdict is printed.
+
+```console
+$ vramfit check llama-3.3-70b -d 4090 --ctx 8k --ram 64 --launcher
+...
+Launch
+  llama.cpp
+    llama-server -m <model.gguf> -ngl 44 -c 8192 -fa on
+
+  Ollama  (Modelfile)
+    FROM llama-3.3-70b
+    PARAMETER num_gpu 44
+    PARAMETER num_ctx 8192
+    OLLAMA_FLASH_ATTENTION=1
+
+  vLLM
+    vllm serve <org/model> --max-model-len 8192 --gpu-memory-utilization 0.95 --quantization gguf
+
+  - -ngl 44 leaves 36 of 80 layers on the CPU. That is the most that fits; a
+    higher number will load and then run out of memory.
+  - vLLM does not offload to system RAM: these flags describe the memory
+    budget, not a configuration it can serve.
+  - --gpu-memory-utilization is capped at 0.95: this deployment wants 181% of
+    the card, and above 95% there is no room left for CUDA graph capture and
+    allocator fragmentation.
+```
+
+The three runtimes spell the same three decisions differently, and each
+translation has a trap in it:
+
+- **`-ngl`** is `n_layer + 1` when the model is resident — llama.cpp counts one
+  extra offloadable layer for the output tensors, which is what `-ngl 99`
+  means spelled exactly — and the number of layers the offload plan actually
+  placed when it is not. That number is a *ceiling*: a higher one loads and
+  then runs out of memory partway through.
+- **Ollama** takes the same two numbers as `num_gpu` and `num_ctx`, but keeps
+  flash attention and the cache type in environment variables rather than in
+  the Modelfile, so both are printed.
+- **vLLM** does not take a layer count at all. It takes the fraction of each
+  card it may occupy and fills whatever is left after the weights with KV
+  blocks, so the figure is this deployment's footprint over the card's
+  *installed* memory — rounded **up**, because rounding down asks for less
+  than the plan needs, and capped at 0.95, because above that there is no room
+  for CUDA graph capture and the server fails at startup.
+
+The paths are kept apart on purpose: `-m` opens a GGUF and nothing else, vLLM
+wants a repository or a directory of safetensors, and Ollama's `FROM` takes
+either. Where there is nothing of the right kind to give — a model looked up
+in the bundled database — a placeholder is printed rather than a path that
+would look right and fail.
+
+`--ngl` on its own prints the number and nothing else, which is the form a
+script wants:
+
+```sh
+llama-server -m ./model.gguf -c 8192 \
+  -ngl "$(vramfit check ./model.gguf -d 4090 --ctx 8k --ngl)"
+```
+
 ## 7. Accuracy and limitations
 
 - Memory figures are **arithmetic**, and only as good as their inputs. Weight
@@ -728,7 +800,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 405 tests across 21 files
+npm test           # vitest -- 424 tests across 22 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 
