@@ -1,7 +1,14 @@
 import { deriveArchitecture } from "../architecture.js";
 import { parseModelSpec } from "../db/validate.js";
 import { QUANTS, findQuant } from "../quant.js";
-import type { ModelSpec, QuantFamily, QuantSpec } from "../types.js";
+import type {
+  AttentionWindowSpec,
+  MlaSpec,
+  ModelSpec,
+  MoeSpec,
+  QuantFamily,
+  QuantSpec,
+} from "../types.js";
 import { GGUF_FILE_TYPES, isGgufArray, type GgufValue } from "./format.js";
 import { GgufError, type GgufHeader } from "./reader.js";
 
@@ -291,7 +298,7 @@ function moeFrom(
   architecture: string,
   nLayers: number,
   ffnHidden: number,
-): Record<string, unknown> | null {
+): MoeSpec | null {
   const nExperts = optionalNumber(header, key(architecture, "expert_count")) ?? 0;
   if (nExperts <= 0) return null;
 
@@ -322,7 +329,7 @@ function moeFrom(
 function attentionWindowFrom(
   header: GgufHeader,
   architecture: string,
-): Record<string, unknown> | null {
+): AttentionWindowSpec | null {
   const windowSize = optionalNumber(header, key(architecture, "attention.sliding_window"));
   if (windowSize === undefined || windowSize <= 0) return null;
   const pattern =
@@ -334,7 +341,7 @@ function attentionWindowFrom(
   return { windowSize, fullAttentionEvery: pattern };
 }
 
-function mlaFrom(header: GgufHeader, architecture: string): Record<string, unknown> | null {
+function mlaFrom(header: GgufHeader, architecture: string): MlaSpec | null {
   const kvLoraRank = optionalNumber(header, key(architecture, "attention.kv_lora_rank"));
   if (kvLoraRank === undefined || kvLoraRank <= 0) return null;
 
@@ -395,7 +402,11 @@ export function modelFromGguf(header: GgufHeader, options: GgufModelOptions = {}
     optionalString(header, "general.basename") ??
     `${architecture} model`;
 
-  const draft: Record<string, unknown> = {
+  // Built as a `ModelSpec` rather than as loose data so the active-parameter
+  // count can be derived from it before it is validated: the validator checks
+  // `activeParams` against the routing the architecture implies, which is a
+  // number only the architecture knows.
+  const draft: ModelSpec = {
     id: slug(name, `gguf-${architecture}`),
     name,
     aliases: [],
@@ -420,11 +431,10 @@ export function modelFromGguf(header: GgufHeader, options: GgufModelOptions = {}
     source: options.origin === undefined ? "GGUF header" : `GGUF header of ${options.origin}`,
   };
 
-  if (draft["moe"] !== null) {
+  if (draft.moe !== null) {
     // Only some of the weights are read per token, and the router decides
-    // which. The architecture knows the ratio; the file does not state it.
-    const arch = deriveArchitecture(parseModelSpec(draft, "gguf"));
-    draft["activeParams"] = arch.activeMatmulParams;
+    // which. The architecture knows the ratio; no metadata field states it.
+    draft.activeParams = deriveArchitecture(draft).activeMatmulParams;
   }
 
   return parseModelSpec(draft, "gguf");
