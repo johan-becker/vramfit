@@ -378,6 +378,21 @@ describe("modelFromHfConfig with a weight count", () => {
     expect(notes[0]).toMatch(/weight files hold 11000000000 parameters but the text decoder/);
     expect(notes[0]).toMatch(/vision tower/);
   });
+
+  it("does not blame a vision tower for weight files that are too small", () => {
+    // Only one of the two directions can be an extra head. Weight files that
+    // hold fewer parameters than the decoder needs are a wrong derivation or
+    // an incomplete checkpoint, and saying "vision tower" there names a cause
+    // that cannot produce the number it is explaining.
+    const { paramSource, notes } = modelFromHfConfig(LLAMA_31_8B, {
+      weights: { totalParams: 6_000_000_000, source: "index" },
+    });
+    expect(paramSource).toBe("architecture");
+    expect(notes[0]).toMatch(/weight files hold 6000000000 parameters but the text decoder/);
+    expect(notes[0]).not.toMatch(/vision tower/);
+    expect(notes[0]).toMatch(/cannot be an extra head/);
+    expect(notes[0]).toMatch(/tie_word_embeddings, vocab_size and torch_dtype/);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
