@@ -387,3 +387,125 @@ export function llamaGgufBytes(options: LlamaGgufOptions = {}): Uint8Array {
     options.version === undefined ? {} : { version: options.version },
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* Small headers for the architectures the mapping has to special-case         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A mixture of experts, small enough to write out in full.
+ *
+ * The shapes are scaled down but the structure is Mixtral's: a router, eight
+ * expert FFNs fused into one 3-D tensor each, and grouped-query attention. The
+ * tensor table sums to the parameter count the architecture implies, which is
+ * what `parseModelSpec` reconciles the two against.
+ */
+export function moeGgufBuilder(): GgufBuilder {
+  const layers = 4;
+  const hidden = 512;
+  const kvWidth = 128;
+  const expertFfn = 1024;
+  const experts = 8;
+  const vocab = 2048;
+
+  const builder = new GgufBuilder()
+    .kv("general.architecture", str("llama"))
+    .kv("general.name", str("Tiny MoE 8x"))
+    .kv("general.file_type", u32(1))
+    .kv("llama.block_count", u32(layers))
+    .kv("llama.context_length", u32(32_768))
+    .kv("llama.embedding_length", u32(hidden))
+    .kv("llama.feed_forward_length", u32(expertFfn))
+    .kv("llama.attention.head_count", u32(8))
+    .kv("llama.attention.head_count_kv", u32(2))
+    .kv("llama.attention.key_length", u32(64))
+    .kv("llama.attention.value_length", u32(64))
+    .kv("llama.expert_count", u32(experts))
+    .kv("llama.expert_used_count", u32(2))
+    .kv("llama.expert_feed_forward_length", u32(expertFfn))
+    .kv("llama.vocab_size", u32(vocab));
+
+  builder.tensor("token_embd.weight", [hidden, vocab], 1);
+  for (let layer = 0; layer < layers; layer++) {
+    builder
+      .tensor(`blk.${layer}.attn_norm.weight`, [hidden], 0)
+      .tensor(`blk.${layer}.attn_q.weight`, [hidden, hidden], 1)
+      .tensor(`blk.${layer}.attn_k.weight`, [hidden, kvWidth], 1)
+      .tensor(`blk.${layer}.attn_v.weight`, [hidden, kvWidth], 1)
+      .tensor(`blk.${layer}.attn_output.weight`, [hidden, hidden], 1)
+      .tensor(`blk.${layer}.ffn_norm.weight`, [hidden], 0)
+      .tensor(`blk.${layer}.ffn_gate_inp.weight`, [hidden, experts], 0)
+      .tensor(`blk.${layer}.ffn_gate_exps.weight`, [hidden, expertFfn, experts], 1)
+      .tensor(`blk.${layer}.ffn_up_exps.weight`, [hidden, expertFfn, experts], 1)
+      .tensor(`blk.${layer}.ffn_down_exps.weight`, [expertFfn, hidden, experts], 1);
+  }
+  builder.tensor("output_norm.weight", [hidden], 0).tensor("output.weight", [hidden, vocab], 1);
+  return builder;
+}
+
+/**
+ * Multi-head latent attention with a fine-grained MoE and one leading dense
+ * layer: DeepSeek V2's structure at 1/1000 of the size. The tensor names are
+ * generic because only `token_embd.weight` and `output.weight` are matched by
+ * name; what the rest of the table has to get right is the element count.
+ */
+export function mlaGgufBuilder(): GgufBuilder {
+  const layers = 4;
+  const hidden = 512;
+  const heads = 8;
+  const kvLoraRank = 128;
+  const qkRope = 16;
+  const qkNope = 32;
+  const vHeadDim = 32;
+  const expertFfn = 256;
+  const experts = 8;
+  const denseFfn = 1024;
+  const vocab = 2048;
+
+  const builder = new GgufBuilder()
+    .kv("general.architecture", str("deepseek2"))
+    .kv("general.name", str("Tiny DeepSeek"))
+    .kv("deepseek2.block_count", u32(layers))
+    .kv("deepseek2.context_length", u32(163_840))
+    .kv("deepseek2.embedding_length", u32(hidden))
+    .kv("deepseek2.feed_forward_length", u32(denseFfn))
+    .kv("deepseek2.attention.head_count", u32(heads))
+    .kv("deepseek2.attention.key_length", u32(qkNope + qkRope))
+    .kv("deepseek2.attention.value_length", u32(vHeadDim))
+    .kv("deepseek2.attention.kv_lora_rank", u32(kvLoraRank))
+    .kv("deepseek2.attention.q_lora_rank", u32(0))
+    .kv("deepseek2.rope.dimension_count", u32(qkRope))
+    .kv("deepseek2.expert_count", u32(experts))
+    .kv("deepseek2.expert_used_count", u32(2))
+    .kv("deepseek2.expert_feed_forward_length", u32(expertFfn))
+    .kv("deepseek2.expert_shared_feed_forward_length", u32(expertFfn * 2))
+    .kv("deepseek2.leading_dense_block_count", u32(1))
+    .kv("deepseek2.vocab_size", u32(vocab));
+
+  builder.tensor("token_embd.weight", [hidden, vocab], 1);
+  for (let layer = 0; layer < layers; layer++) {
+    builder
+      .tensor(`blk.${layer}.attn_q.weight`, [hidden, heads * (qkNope + qkRope)], 1)
+      .tensor(`blk.${layer}.attn_kv_a_mqa.weight`, [hidden, kvLoraRank + qkRope], 1)
+      .tensor(`blk.${layer}.attn_kv_b.weight`, [kvLoraRank, heads * (qkNope + vHeadDim)], 1)
+      .tensor(`blk.${layer}.attn_output.weight`, [heads * vHeadDim, hidden], 1);
+
+    if (layer === 0) {
+      builder
+        .tensor(`blk.${layer}.ffn_gate.weight`, [hidden, denseFfn], 1)
+        .tensor(`blk.${layer}.ffn_up.weight`, [hidden, denseFfn], 1)
+        .tensor(`blk.${layer}.ffn_down.weight`, [denseFfn, hidden], 1);
+      continue;
+    }
+    builder
+      .tensor(`blk.${layer}.ffn_gate_inp.weight`, [hidden, experts], 0)
+      .tensor(`blk.${layer}.ffn_gate_exps.weight`, [hidden, expertFfn, experts], 1)
+      .tensor(`blk.${layer}.ffn_up_exps.weight`, [hidden, expertFfn, experts], 1)
+      .tensor(`blk.${layer}.ffn_down_exps.weight`, [expertFfn, hidden, experts], 1)
+      .tensor(`blk.${layer}.ffn_gate_shexp.weight`, [hidden, expertFfn * 2], 1)
+      .tensor(`blk.${layer}.ffn_up_shexp.weight`, [hidden, expertFfn * 2], 1)
+      .tensor(`blk.${layer}.ffn_down_shexp.weight`, [expertFfn * 2, hidden], 1);
+  }
+  builder.tensor("output.weight", [hidden, vocab], 1);
+  return builder;
+}
