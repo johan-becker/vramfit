@@ -222,6 +222,21 @@ and what exactly do I type to start it.
 - **README** documents `best`'s exit 1, the `--json` payload, and the
   behaviour of `--vram`, `--efficiency` and `-q`.
 
+### Licensing
+
+- Released under the [Apache License, Version 2.0](LICENSE) — OSI-approved
+  open source, the same licence 0.1.0 carried. Use, modification and
+  redistribution are free for any purpose and at any organisation size,
+  including commercially and inside proprietary products. Keep the copyright
+  and licence notices, state any significant changes, and ship the
+  [`NOTICE`](NOTICE) file with any redistribution — section 4(d) of the
+  licence requires it. An express, royalty-free patent grant from every
+  contributor comes with it, terminating for anyone who brings a patent claim
+  against the project.
+- "vramfit" and its logo are unregistered trade marks of Johan Becker and are
+  not licensed by the code licence: section 6 withholds trade mark rights
+  expressly. See [`TRADEMARKS.md`](TRADEMARKS.md).
+
 ## [0.1.0] - 2026-08-22
 
 First release. Library and CLI, TypeScript/ESM, Node 20+, zero runtime
