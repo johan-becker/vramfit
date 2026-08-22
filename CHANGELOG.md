@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Licensing is now documented in full.** vramfit is distributed under the
+  [Apache License, Version 2.0](LICENSE) — OSI-approved open source. Use,
+  modification and redistribution are free for any purpose and at any
+  organisation size, including commercially and inside proprietary products.
+  The conditions are the usual Apache ones: keep the copyright and licence
+  notices, state significant changes, and ship the `NOTICE` file with any
+  redistribution. The licence also carries an express patent grant from every
+  contributor, with the standard termination on patent litigation. Licensing
+  contact: jo_becker@mailbox.org.
+
+### Added
+
+- **`NOTICE`** — the attribution notice required by section 4(d) of the Apache
+  License, carrying the copyright line and the trade mark reservation. It must
+  be included with any redistribution of vramfit.
+- **`TRADEMARKS.md`** — "vramfit" and its logo are unregistered trade marks of
+  Johan Becker and are not licensed by the code licence. Nominative use is
+  fine; shipping a fork, distribution, hosted service or product under the
+  name, or claiming an official namespace, is not.
+- **`DCO`** — the Developer Certificate of Origin 1.1, which contributions are
+  now accepted under. `CONTRIBUTING.md` gains a contributor-terms section:
+  `Signed-off-by` is required on every commit, and contributions are taken
+  under the same Apache License, Version 2.0 the project ships under, with
+  contributors keeping their own copyright.
+
 ### Fixed
 
 - **`compare` and device names that end in a digit.** The `xN` count suffix was
