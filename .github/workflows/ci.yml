@@ -46,6 +46,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # tsconfig.build.json compiles src/ only. This is the pass that covers
+      # test/, scripts/ and the vitest config, so a test file that stops
+      # type-checking fails here rather than silently rotting.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build
         run: npm run build
 
