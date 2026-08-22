@@ -35,6 +35,10 @@ $ npm test
       user-visible.
 - [ ] README updated if CLI behaviour, output, or a documented figure changed —
       and every example printed there is pasted from a real run.
+- [ ] Every commit is signed off (`git commit -s`), certifying the
+      [DCO](../DCO). vramfit is Apache-2.0, and contributions are licensed
+      under those same terms — see
+      [CONTRIBUTING.md](../CONTRIBUTING.md#contributor-terms).
 
 ## Notes for the reviewer
 

@@ -122,6 +122,57 @@ CI runs the same chain on Node 20, 22 and 24 on Linux plus Node 22 on macOS and
 Windows, and additionally packs the tarball and installs it into a clean
 project. Both jobs must be green.
 
-By contributing you agree that your work is licensed under the
-[Apache License 2.0](LICENSE), and that you will follow the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Contributor terms
+
+vramfit is **open source** under the
+[Apache License, Version 2.0](LICENSE). There is no CLA, no copyright
+assignment and no separate commercial licence: inbound contributions are taken
+under exactly the same terms the project ships under. Two things follow from
+that, and both are stated here rather than buried in a form.
+
+### Sign off every commit
+
+Contributions are accepted under the
+[Developer Certificate of Origin 1.1](DCO) — the full text is in the `DCO` file
+at the root of this repository. There is no CLA to sign and no form to fill in;
+you sign off in the commit itself:
+
+```sh
+git commit -s -m "fix: keep the KV block layout table in sync with quant.ts"
+```
+
+`-s` appends a line to the commit message:
+
+```
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+Use your real name and an address where you can be reached. By adding that
+line you certify the DCO: in short, that you wrote the contribution or
+otherwise have the right to submit it, and that you understand it will be
+kept and redistributed as part of a public record. Commits without a
+`Signed-off-by` line cannot be merged — if you forgot, `git commit --amend -s`
+fixes the last one and `git rebase --signoff main` fixes a branch.
+
+### What you grant, and what you keep
+
+Section 5 of the [Apache License 2.0](LICENSE) already settles this: unless you
+state otherwise in writing, anything you deliberately submit for inclusion in
+vramfit is contributed under the terms of that licence. There is no extra grant
+to sign, because none is needed.
+
+You **keep the copyright in your contribution**. This is a licence, not an
+assignment: you are not signing your work over, and you remain free to use your
+own contribution however you like, elsewhere, for any purpose. The patent
+licence in section 3 travels with the code, so everyone downstream receives the
+same patent grant from you as from every other contributor.
+
+If you are contributing as part of your job, make sure your employer is fine
+with it before you open the pull request — that is exactly what clause (a) of
+the DCO is asking you to confirm.
+
+Bug reports, reproductions, benchmark data, device and model figures with
+sources, and documentation corrections are all very welcome, and none of them
+are blocked on any of the above.
