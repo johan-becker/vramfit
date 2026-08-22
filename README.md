@@ -81,6 +81,9 @@ Memory
   Total             9.47 GiB  at Q4_K_M
   Available        24.00 GiB  NVIDIA RTX 4090
 
+  ███████████▓▓▓▓▓▓▓▓▓▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  39% of 24.00 GiB
+  █ weights 4.62   ▓ KV 4.00   ▒ overhead 0.85   ░ free 14.53   (GiB)
+
 Capacity
   Largest context that fits    128K  the architecture's own maximum
   Best quant that fits at 32K   F16  14.96 GiB of weights, 39.2 tok/s
@@ -270,6 +273,9 @@ Memory
   Total            43.39 GiB  at Q4_K_M
   Available        24.00 GiB  NVIDIA RTX 3090
 
+  ███████████████████████████████▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚▚  43.39 GiB needed, 24.00 GiB available
+  █ weights 39.88   ▓ KV 2.50   ▒ overhead 1.01   ▚ over 19.39   (GiB)
+
 Capacity
   Largest context that fits   none  Q4_K_M, batch 1, f16 cache
   Best quant that fits at 8K  none  try a smaller model, a longer offload or more memory
@@ -340,6 +346,9 @@ HuggingFace checkpoint directory. Both are read from their own headers.
 | `--config <path>` | `fleet` only: the JSON description of the machines and the models |
 | `--launcher [runtime]` | Print the exact flags this fit implies: `llama.cpp`, `ollama`, `vllm`, or all three |
 | `--ngl` | Print only the llama.cpp `-ngl` value and exit, for a shell substitution |
+| `--explain` | Show every headline number with the arithmetic that produced it |
+| `--markdown` | Markdown tables, for pasting into an issue. Mutually exclusive with `--json` |
+| `--color` / `--no-color` | Force ANSI colour on or off; the default follows the terminal, and `NO_COLOR` is honoured |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
@@ -498,6 +507,9 @@ Memory
   Compute buffer    0.15 GiB  activations, logits and graph scratch
   Total             9.67 GiB  at Q4_K_M
   Available        24.00 GiB  NVIDIA RTX 4090
+
+  ███████████▓▓▓▓▓▓▓▓▓▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  40% of 24.00 GiB
+  █ weights 4.82   ▓ KV 4.00   ▒ overhead 0.85   ░ free 14.33   (GiB)
 ...
 ```
 
@@ -766,6 +778,88 @@ llama-server -m ./model.gguf -c 8192 \
   -ngl "$(vramfit check ./model.gguf -d 4090 --ctx 8k --ngl)"
 ```
 
+### 6.9 Presentation
+
+Three things that exist so the output can be read, argued with and passed on.
+
+**The memory bar.** The table has the numbers; the bar has the proportions,
+which is the part people actually reason with — "the cache is half of it" is a
+decision, and "4.00 GiB" is a figure you then have to divide. Every segment
+carries its own block character as well as its own colour, so it survives
+being pasted into an issue, piped into a file, or read with colour off:
+
+```
+  ███████████▓▓▓▓▓▓▓▓▓▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  39% of 24.00 GiB
+  █ weights 4.62   ▓ KV 4.00   ▒ overhead 0.85   ░ free 14.53   (GiB)
+```
+
+When the model does not fit, the part past the card's capacity is redrawn as
+overflow **in place** rather than appended, because those bytes are already
+counted once — so the bar shows how far over it went instead of clamping at
+full and looking the same at 1 GiB short and 40 GiB short.
+
+Colour is off unless the output is going to a terminal that wants it:
+`--color` / `--no-color` win outright, then `NO_COLOR`, then `FORCE_COLOR`,
+then `TERM=dumb`, then whether stdout is a TTY. `vramfit check > report.txt`
+produces a file with no escape sequences in it.
+
+**`--explain`.** The formulas from section 4, with this model's own numbers
+substituted, so the maths can be checked rather than taken:
+
+```console
+$ vramfit check llama-3.1-8b -d 4090 --ctx 32k --explain
+...
+Explain  (Llama 3.1 8B at Q4_K_M, 32K context, f16 cache)
+  Weights = parameters x bits per weight / 8
+    blocks      6,979,588,096 x 4.83 / 8        = 3.925 GiB
+    token_embd  525,336,576 x 4.83 / 8          = 0.295 GiB
+    output      525,336,576 x 6.56 / 8          = 0.401 GiB
+    total       4.94 effective bits per weight  = 4.621 GiB
+
+  KV cache = 2 x layers x KV heads x head dim x ctx x sequences x bytes/element
+    all layers  2 x 32 x 8 x 128 x 32768 x 1 x 2  = 4.000 GiB
+    Grouped-query attention: 8 KV heads, not the 32 query heads. Using the
+    query count here is the 4x mistake this tool exists to avoid.
+...
+  Decode = bandwidth x efficiency / bytes read per token  (estimate, +/-25%)
+    efficiency      0.75 at 16 bits, less the dequantization penalty at 0.92 of full  = 0.598
+    bandwidth       1008 GB/s x 0.598                                                 = 603 GB/s
+    read per token  4.64 GB active weights + 4.29 GB cache                            = 8.94 GB
+    decode          603 GB/s / 8.94 GB                                                = 67.4 tok/s
+```
+
+Nothing is recomputed for this: the values printed are the ones the report
+printed, and the expressions beside them are how those values arose. The KV
+section switches formula with the architecture, so a DeepSeek model shows
+`27 x (512 + 64) x ctx` and a Gemma 3 shows its global and windowed layers
+apart.
+
+**`--markdown`.** The same reports through pipes instead of spaces, for
+pasting into an issue or a README:
+
+```markdown
+### Llama 3.1 8B — Q4_K_M — NVIDIA RTX 4090
+
+**FITS** — 6.47 GiB of 24.00 GiB used, 17.53 GiB free (27% utilised)
+
+| Component | Size | Assumption |
+| --- | ---: | --- |
+| Weights | 4.62 GiB | 8.03B params at 4.94 effective bits/weight |
+| KV cache | 1.00 GiB | 8K tokens, 32 layers x 8 KV heads x 128, f16 |
+| Runtime context | 0.70 GiB | cuda-consumer driver and kernels |
+| Compute buffer | 0.15 GiB | activations, logits and graph scratch |
+| **Total** | **6.47 GiB** | at Q4_K_M |
+| Available | 24.00 GiB | NVIDIA RTX 4090 |
+```
+
+The cells come from the same place the terminal table's do, so the two cannot
+drift apart. Only three things change shape: the memory bar, the launch flags
+and the `--explain` block are fixed-width, so they go inside fences — and the
+last of those folds into a `<details>` block so the report above it stays
+readable. `recommend --markdown` gains a trade-off column, which a terminal
+has no room for. `--json` and `--markdown` together are refused rather than
+one quietly winning.
+
 ## 7. Accuracy and limitations
 
 - Memory figures are **arithmetic**, and only as good as their inputs. Weight
@@ -800,7 +894,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 424 tests across 22 files
+npm test           # vitest -- 464 tests across 22 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 

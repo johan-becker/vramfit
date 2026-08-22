@@ -59,6 +59,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the output head. Little-endian GGUF v2 and v3, every metadata value type
   including nested arrays. `--gguf <path>` for a file that is not named
   `.gguf`; `model.origin` and `model.from` in the JSON payload.
+- The smoke test covers the new commands and formats against the built
+  binary, including that a pipe receives no escape sequences and that the
+  memory bar's block characters survive on every supported platform.
+- **A memory-breakdown bar** under `check`'s memory table — weights, cache,
+  overhead and free, each with its own block character as well as its own
+  colour, so it reads with colour stripped. ANSI is emitted only for a
+  terminal that wants it: `--color` / `--no-color`, then `NO_COLOR`, then
+  `FORCE_COLOR`, then `TERM`, then whether stdout is a TTY.
+- **`--explain`** — every headline figure with the formula and the numbers
+  that produced it, switching KV formula with the model's attention flavour.
+- **`--markdown`** on every command, for pasting into an issue. The cells are
+  shared with the terminal renderer so the two cannot drift; the bar, the
+  launch flags and the `--explain` block go inside fences, the last folded
+  into a `<details>`. Refused together with `--json`.
 - **`--launcher` and `--ngl` on `check`** — the exact flags a fit implies, for
   llama.cpp (`-ngl`, `-c`, `-fa`, `--cache-type-k/-v`, `--parallel`), Ollama
   (`num_gpu`, `num_ctx`, and the environment variables it keeps them in) and

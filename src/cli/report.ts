@@ -6,6 +6,9 @@ import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { GIB, bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
+import { renderMemoryBar } from "./bar.js";
+import { PLAIN_PALETTE, type Palette } from "./color.js";
+import { renderExplain } from "./explain.js";
 import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
@@ -15,6 +18,7 @@ import {
   renderPairs,
   renderTable,
   wrap,
+  type Column,
   type Pair,
 } from "./format.js";
 
@@ -32,12 +36,28 @@ import {
 
 const WRAP_WIDTH = 78;
 
+/**
+ * A table before it is drawn.
+ *
+ * The text and Markdown renderings differ only in how cells are separated, so
+ * they share the cells: a column that gains a figure in one gains it in both,
+ * and neither can quietly drift from the other.
+ */
+export interface TableShape {
+  columns: Column[];
+  rows: string[][];
+}
+
 /** Presentation choices a report takes from the command line. */
 export interface ReportOptions {
   /** Where the model came from, when it did not come from the database. */
   source?: ResolvedModel;
   /** The launch flags to print, and which runtimes to print them for. */
   launcher?: { plan: LauncherPlan; runtime: LauncherRuntime };
+  /** Colour, when the output is going somewhere that can show it. */
+  palette?: Palette;
+  /** Show every headline number with the arithmetic that produced it. */
+  explain?: boolean;
 }
 
 /**
@@ -113,13 +133,13 @@ function memoryPairs(fit: FitResult): Pair[] {
   return pairs;
 }
 
-function verdictLine(fit: FitResult): string {
+function verdictLine(fit: FitResult, palette: Palette): string {
   const used = formatBytes(fit.usedBytes);
   const available = formatBytes(fit.capacity.totalBytes);
   if (fit.fits) {
-    return `FITS  -  ${used} of ${available} used, ${formatBytes(fit.headroomBytes)} free (${formatPercent(fit.utilization)} utilised)`;
+    return `${palette.paint("good", "FITS")}  -  ${used} of ${available} used, ${formatBytes(fit.headroomBytes)} free (${formatPercent(fit.utilization)} utilised)`;
   }
-  return `DOES NOT FIT  -  ${used} needed, ${available} available, ${formatBytes(-fit.headroomBytes)} short`;
+  return `${palette.paint("bad", "DOES NOT FIT")}  -  ${used} needed, ${available} available, ${formatBytes(-fit.headroomBytes)} short`;
 }
 
 function speedPairs(fit: FitResult): Pair[] {
@@ -188,8 +208,22 @@ export function renderCheck(
     fit.gpus > 1 ? `${fit.gpus} x ${fit.device.name}` : fit.device.name,
   ].join("  |  ");
 
-  lines.push(heading, "=".repeat(heading.length), "", ...sourceLines(options), verdictLine(fit), "");
-  lines.push("Memory", ...renderPairs(memoryPairs(fit)), "");
+  const palette = options.palette ?? PLAIN_PALETTE;
+  lines.push(
+    heading,
+    "=".repeat(heading.length),
+    "",
+    ...sourceLines(options),
+    verdictLine(fit, palette),
+    "",
+  );
+  lines.push(
+    "Memory",
+    ...renderPairs(memoryPairs(fit)),
+    "",
+    ...renderMemoryBar(fit, palette),
+    "",
+  );
 
   lines.push(
     "Capacity",
@@ -221,6 +255,10 @@ export function renderCheck(
     `Speed (estimates: decode +/-${Math.round(fit.throughput.decodeErrorBand * 100)}%, prefill +/-${Math.round(fit.throughput.prefillErrorBand * 100)}%)`,
     ...renderPairs(speedPairs(fit)),
   );
+
+  if (options.explain === true) {
+    lines.push("", ...renderExplain(fit));
+  }
 
   const launcher = options.launcher;
   if (launcher !== undefined) {
@@ -332,6 +370,36 @@ function isOffloadInfeasible(option: QuantOption): boolean {
   return option.fit.offload !== null && !option.fit.offload.feasible;
 }
 
+/** Columns and cells shared by the text and Markdown renderings of `best`. */
+export function bestTableShape(options: readonly QuantOption[], ctx: number): TableShape {
+  // The quantization notes are a paragraph each and would make every column
+  // unreadable, so the table stays numeric and the note is shown once, for the
+  // row that actually matters.
+  return {
+    columns: [
+      { header: "Quant" },
+      { header: "bpw", align: "right" },
+      { header: "Weights", align: "right" },
+      { header: `Total at ${formatContext(ctx)}`, align: "right" },
+      { header: "Fits", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows: options.map((option) => [
+      option.quant.label,
+      option.quant.bitsPerWeight.toFixed(2),
+      formatBytes(option.fit.footprint.weights.totalBytes),
+      formatBytes(option.fit.footprint.totalBytes),
+      option.fit.fits ? "yes" : "no",
+      option.maxContext > 0 ? formatContext(option.maxContext) : "-",
+      // A decode figure for a split that needs more host RAM than the tool was
+      // told about is not "what you would actually get" -- that configuration
+      // does not load at all -- so it is marked rather than printed bare.
+      `${formatRate(option.decodeTokensPerSecond)}${isOffloadInfeasible(option) ? " *" : ""}`,
+    ]),
+  };
+}
+
 /** The `vramfit best` table: every quantization, best quality first. */
 export function renderBest(
   model: ModelSpec,
@@ -342,21 +410,7 @@ export function renderBest(
   report: ReportOptions = {},
 ): string[] {
   const heading = `${model.name}  |  ${gpus > 1 ? `${gpus} x ${device.name}` : device.name}`;
-  // The quantization notes are a paragraph each and would make every column
-  // unreadable, so the table stays numeric and the note is shown once, for the
-  // row that actually matters.
-  const rows = options.map((option) => [
-    option.quant.label,
-    option.quant.bitsPerWeight.toFixed(2),
-    formatBytes(option.fit.footprint.weights.totalBytes),
-    formatBytes(option.fit.footprint.totalBytes),
-    option.fit.fits ? "yes" : "no",
-    option.maxContext > 0 ? formatContext(option.maxContext) : "-",
-    // A decode figure for a split that needs more host RAM than the tool was
-    // told about is not "what you would actually get" -- that configuration
-    // does not load at all -- so it is marked rather than printed bare.
-    `${formatRate(option.decodeTokensPerSecond)}${isOffloadInfeasible(option) ? " *" : ""}`,
-  ]);
+  const shape = bestTableShape(options, ctx);
 
   const starved = options.find(isOffloadInfeasible);
   const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
@@ -367,18 +421,7 @@ export function renderBest(
     "=".repeat(heading.length),
     "",
     ...sourceLines(report),
-    ...renderTable(
-      [
-        { header: "Quant" },
-        { header: "bpw", align: "right" },
-        { header: "Weights", align: "right" },
-        { header: `Total at ${formatContext(ctx)}`, align: "right" },
-        { header: "Fits", align: "right" },
-        { header: "Max ctx", align: "right" },
-        { header: "Decode", align: "right" },
-      ],
-      rows,
-    ),
+    ...renderTable(shape.columns, shape.rows),
     "",
     ...(options.some((option) => !option.fit.fits)
       ? wrap(
@@ -440,10 +483,10 @@ export function bestJson(
   };
 }
 
-/** `vramfit devices`. */
-export function renderDevices(devices: readonly DeviceSpec[]): string[] {
-  return renderTable(
-    [
+/** Columns and cells for `vramfit devices`. */
+export function devicesTableShape(devices: readonly DeviceSpec[]): TableShape {
+  return {
+    columns: [
       { header: "ID" },
       { header: "Name" },
       { header: "Memory", align: "right" },
@@ -452,7 +495,7 @@ export function renderDevices(devices: readonly DeviceSpec[]): string[] {
       { header: "FP16", align: "right" },
       { header: "Family" },
     ],
-    devices.map((device) => [
+    rows: devices.map((device) => [
       device.id,
       device.name,
       `${device.vramGiB} GiB`,
@@ -461,13 +504,19 @@ export function renderDevices(devices: readonly DeviceSpec[]): string[] {
       `${device.fp16Tflops} TF`,
       device.family,
     ]),
-  );
+  };
 }
 
-/** `vramfit models`. */
-export function renderModels(models: readonly ModelSpec[]): string[] {
-  return renderTable(
-    [
+/** `vramfit devices`. */
+export function renderDevices(devices: readonly DeviceSpec[]): string[] {
+  const shape = devicesTableShape(devices);
+  return renderTable(shape.columns, shape.rows);
+}
+
+/** Columns and cells for `vramfit models`. */
+export function modelsTableShape(models: readonly ModelSpec[]): TableShape {
+  return {
+    columns: [
       { header: "ID" },
       { header: "Name" },
       { header: "Params", align: "right" },
@@ -477,7 +526,7 @@ export function renderModels(models: readonly ModelSpec[]): string[] {
       { header: "Max ctx", align: "right" },
       { header: "Attention" },
     ],
-    models.map((model) => [
+    rows: models.map((model) => [
       model.id,
       model.name,
       formatParams(model.totalParams),
@@ -491,7 +540,13 @@ export function renderModels(models: readonly ModelSpec[]): string[] {
           ? `GQA + SWA/${model.attentionWindow.fullAttentionEvery}`
           : "GQA",
     ]),
-  );
+  };
+}
+
+/** `vramfit models`. */
+export function renderModels(models: readonly ModelSpec[]): string[] {
+  const shape = modelsTableShape(models);
+  return renderTable(shape.columns, shape.rows);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -505,19 +560,10 @@ function deviceLabel(comparison: DeviceComparison): string {
     : comparison.device.name;
 }
 
-/** The `vramfit compare` table: one model, every device, best first. */
-export function renderCompare(
-  model: ModelSpec,
-  quant: QuantSpec,
-  rows: readonly DeviceComparison[],
-  ctx: number,
-  report: ReportOptions = {},
-): string[] {
-  const heading = `${model.name}  |  ${quant.label}  |  ${formatContext(ctx)} context`;
-  const starved = rows.find((row) => row.fit.offload !== null && !row.fit.offload.feasible);
-
-  const table = renderTable(
-    [
+/** Columns and cells shared by the text and Markdown renderings of `compare`. */
+export function compareTableShape(rows: readonly DeviceComparison[]): TableShape {
+  return {
+    columns: [
       { header: "" },
       { header: "Device" },
       { header: "Memory", align: "right" },
@@ -527,7 +573,7 @@ export function renderCompare(
       { header: "Max ctx", align: "right" },
       { header: "Decode", align: "right" },
     ],
-    rows.map((row) => [
+    rows: rows.map((row) => [
       row.best ? "->" : "",
       deviceLabel(row),
       formatBytes(row.fit.capacity.totalBytes),
@@ -539,7 +585,22 @@ export function renderCompare(
         row.fit.offload !== null && !row.fit.offload.feasible ? " *" : ""
       }`,
     ]),
-  );
+  };
+}
+
+/** The `vramfit compare` table: one model, every device, best first. */
+export function renderCompare(
+  model: ModelSpec,
+  quant: QuantSpec,
+  rows: readonly DeviceComparison[],
+  ctx: number,
+  report: ReportOptions = {},
+): string[] {
+  const heading = `${model.name}  |  ${quant.label}  |  ${formatContext(ctx)} context`;
+  const starved = rows.find((row) => row.fit.offload !== null && !row.fit.offload.feasible);
+
+  const shape = compareTableShape(rows);
+  const table = renderTable(shape.columns, shape.rows);
 
   const best = rows.find((row) => row.best);
   // Nothing fits: the ranking put the row that came closest first.
@@ -614,6 +675,30 @@ export function compareJson(
 /* recommend                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/** Columns and cells shared by the text and Markdown renderings of `recommend`. */
+export function recommendTableShape(rows: readonly Recommendation[]): TableShape {
+  return {
+    columns: [
+      { header: "#", align: "right" },
+      { header: "Model" },
+      { header: "Params", align: "right" },
+      { header: "Quant" },
+      { header: "Total", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows: rows.map((row, index) => [
+      `${index + 1}.`,
+      row.model.name,
+      formatParams(row.model.totalParams),
+      row.quant.label,
+      formatBytes(row.fit.footprint.totalBytes),
+      formatContext(row.maxContext),
+      formatRate(row.decodeTokensPerSecond),
+    ]),
+  };
+}
+
 /**
  * The `vramfit recommend` list.
  *
@@ -643,26 +728,8 @@ export function renderRecommend(
     ];
   }
 
-  const table = renderTable(
-    [
-      { header: "#", align: "right" },
-      { header: "Model" },
-      { header: "Params", align: "right" },
-      { header: "Quant" },
-      { header: "Total", align: "right" },
-      { header: "Max ctx", align: "right" },
-      { header: "Decode", align: "right" },
-    ],
-    rows.map((row, index) => [
-      `${index + 1}.`,
-      row.model.name,
-      formatParams(row.model.totalParams),
-      row.quant.label,
-      formatBytes(row.fit.footprint.totalBytes),
-      formatContext(row.maxContext),
-      formatRate(row.decodeTokensPerSecond),
-    ]),
-  );
+  const shape = recommendTableShape(rows);
+  const table = renderTable(shape.columns, shape.rows);
 
   const [header, separator, ...body] = table;
   lines.push(header as string, separator as string);
@@ -736,6 +803,49 @@ function machineLegend(machine: FleetMachine): string[] {
   ];
 }
 
+/** Columns and cells shared by the text and Markdown renderings of `fleet`. */
+export function fleetTableShape(report: FleetReport): TableShape {
+  return {
+    columns: [
+      { header: "Model" },
+      { header: "Quant" },
+      { header: "Ctx", align: "right" },
+      { header: "Weights+KV", align: "right" },
+      ...report.machines.map((machine) => ({ header: machine.name, align: "right" as const })),
+      { header: "Served", align: "right" },
+    ],
+    rows: report.rows.map((row) => [
+      row.entry.label,
+      row.entry.quant.label,
+      formatContext(row.entry.ctx),
+      // Weights and cache are the same on every machine; the runtime context
+      // and compute buffer are charged per device and so differ between them.
+      // Showing one machine's total in a shared column would misreport the rest.
+      formatBytes(
+        (row.cells[0]?.fit.footprint.weights.totalBytes ?? 0) +
+          (row.cells[0]?.fit.footprint.kv.totalBytes ?? 0),
+      ),
+      ...row.cells.map((cell) =>
+        cell.fit.fits ? formatRate(cell.fit.throughput.decode.tokensPerSecond) : "-",
+      ),
+      `${row.servedBy}/${report.machines.length}`,
+    ]),
+  };
+}
+
+/** The machine legend under a fleet table. */
+export function fleetMachineShape(report: FleetReport): TableShape {
+  return {
+    columns: [
+      { header: "Name" },
+      { header: "Device" },
+      { header: "Usable", align: "right" },
+      { header: "System RAM", align: "right" },
+    ],
+    rows: report.machines.map(machineLegend),
+  };
+}
+
 /**
  * The `vramfit fleet` matrix: one row per model, one column per machine.
  *
@@ -743,44 +853,15 @@ function machineLegend(machine: FleetMachine): string[] {
  * 3 tok/s" are different answers and the second one is usually a no.
  */
 export function renderFleet(report: FleetReport): string[] {
-  const columns = [
-    { header: "Model" },
-    { header: "Quant" },
-    { header: "Ctx", align: "right" as const },
-    { header: "Weights+KV", align: "right" as const },
-    ...report.machines.map((machine) => ({ header: machine.name, align: "right" as const })),
-    { header: "Served", align: "right" as const },
-  ];
+  const shape = fleetTableShape(report);
 
-  const rows = report.rows.map((row) => [
-    row.entry.label,
-    row.entry.quant.label,
-    formatContext(row.entry.ctx),
-    // Weights and cache are the same on every machine; the runtime context
-    // and compute buffer are charged per device and so differ between them.
-    // Showing one machine's total in a shared column would misreport the rest.
-    formatBytes(
-      (row.cells[0]?.fit.footprint.weights.totalBytes ?? 0) +
-        (row.cells[0]?.fit.footprint.kv.totalBytes ?? 0),
-    ),
-    ...row.cells.map((cell) => (cell.fit.fits ? formatRate(cell.fit.throughput.decode.tokensPerSecond) : "-")),
-    `${row.servedBy}/${report.machines.length}`,
-  ]);
-
+  const machines = fleetMachineShape(report);
   const heading = `Fleet  |  ${report.machines.length} machines  |  ${report.rows.length} models`;
-  const lines = [heading, "=".repeat(heading.length), "", ...renderTable(columns, rows), ""];
+  const lines = [heading, "=".repeat(heading.length), "", ...renderTable(shape.columns, shape.rows), ""];
 
   lines.push(
     "Machines",
-    ...renderTable(
-      [
-        { header: "Name" },
-        { header: "Device" },
-        { header: "Usable", align: "right" },
-        { header: "System RAM", align: "right" },
-      ],
-      report.machines.map(machineLegend),
-    ).map((line) => `  ${line}`.trimEnd()),
+    ...renderTable(machines.columns, machines.rows).map((line) => `  ${line}`.trimEnd()),
     "",
   );
 
