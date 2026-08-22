@@ -23,6 +23,21 @@ if (!existsSync(bin)) {
   process.exit(1);
 }
 
+/**
+ * One end-to-end case: the argv to run, the exit code to expect, and patterns
+ * the output has to match (or, for rejectStderr, must not).
+ *
+ * @typedef {object} SmokeCase
+ * @property {string} name
+ * @property {string[]} argv
+ * @property {number} exit
+ * @property {RegExp[]} [expect]
+ * @property {RegExp[]} [expectStderr]
+ * @property {RegExp[]} [rejectStderr]
+ * @property {(payload: any) => void} [json]
+ */
+
+/** @type {SmokeCase[]} */
 const cases = [
   {
     name: "check, fits",
@@ -127,7 +142,7 @@ for (const testCase of cases) {
     try {
       testCase.json(JSON.parse(result.stdout));
     } catch (cause) {
-      problems.push(`json: ${cause.message}`);
+      problems.push(`json: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
 
@@ -143,7 +158,7 @@ for (const testCase of cases) {
 
 // The library entry point has to load from the build too, and it is the one
 // that reads the bundled JSON relative to its own compiled location.
-const library = await import(new URL("../dist/index.js", import.meta.url));
+const library = await import(new URL("../dist/index.js", import.meta.url).href);
 if (library.listModels().length < 20 || library.listDevices().length < 20) {
   console.error("FAIL  library entry point: bundled database did not load from dist");
   failures++;
