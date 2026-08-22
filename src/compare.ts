@@ -40,14 +40,15 @@ export interface DeviceComparison {
   best: boolean;
 }
 
-/**
- * Parse a `--devices 4090,3090x2,m4-max` list.
- *
- * The `xN` suffix is the reason this is not a `split(",")`: comparing one
- * 4090 against two of them is the most common form of the question, and
- * spelling it as a separate `--gpus` flag would apply it to every row.
- */
-export function parseDeviceList(raw: string): { query: string; gpus: number }[] {
+export interface DeviceListEntry {
+  /** The device name, id or alias, with any count suffix removed. */
+  query: string;
+  /** Identical devices asked for by this entry. */
+  gpus: number;
+}
+
+/** Split a `--devices` list into its entries, refusing an empty one. */
+export function splitDeviceList(raw: string): string[] {
   const entries = raw
     .split(",")
     .map((entry) => entry.trim())
@@ -55,15 +56,39 @@ export function parseDeviceList(raw: string): { query: string; gpus: number }[] 
   if (entries.length === 0) {
     throw new Error("no devices given; expected a list such as 4090,3090x2,m4-max");
   }
-  return entries.map((entry) => {
-    const match = /^(.*?)\s*[x*]\s*(\d+)$/i.exec(entry);
-    if (match === null) return { query: entry, gpus: 1 };
-    const gpus = Number.parseInt(match[2] as string, 10);
-    if (gpus < 1) {
-      throw new Error(`"${entry}" asks for ${gpus} devices; the count must be at least 1`);
-    }
-    return { query: (match[1] as string).trim(), gpus };
-  });
+  return entries;
+}
+
+/**
+ * Read one entry's optional `xN` count.
+ *
+ * The suffix is lexically ambiguous with a device name -- `rtx4090` and
+ * `4090x2` are the same shape, and six bundled aliases end in `x` followed by
+ * digits -- so the caller is expected to try the whole token as a name first
+ * and only fall back to this when it is not one. `defaultGpus` is what an
+ * entry with no suffix means, which is where `--gpus` enters.
+ */
+export function parseDeviceEntry(entry: string, defaultGpus = 1): DeviceListEntry {
+  const match = /^(.*?)\s*[x*]\s*(\d+)$/i.exec(entry);
+  if (match === null) return { query: entry, gpus: defaultGpus };
+  const gpus = Number.parseInt(match[2] as string, 10);
+  if (gpus < 1) {
+    throw new Error(`"${entry}" asks for ${gpus} devices; the count must be at least 1`);
+  }
+  return { query: (match[1] as string).trim(), gpus };
+}
+
+/**
+ * Parse a `--devices 4090,3090x2,m4-max` list.
+ *
+ * The `xN` suffix is the reason this is not a `split(",")`: comparing one
+ * 4090 against two of them is the most common form of the question, and
+ * spelling it as a separate `--gpus` flag would apply it to every row. An
+ * entry that carries no suffix takes `defaultGpus`, so `--gpus 2` still means
+ * something on a list that does not spell the count out per device.
+ */
+export function parseDeviceList(raw: string, defaultGpus = 1): DeviceListEntry[] {
+  return splitDeviceList(raw).map((entry) => parseDeviceEntry(entry, defaultGpus));
 }
 
 function rank(a: DeviceComparison, b: DeviceComparison): number {
