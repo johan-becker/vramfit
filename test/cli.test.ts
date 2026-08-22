@@ -140,6 +140,33 @@ describe("vramfit check", () => {
     expect(payload.throughput.timeToFirstTokenSeconds).toBeLessThan(1);
   });
 
+  it("turns a malformed --version or --help into exit 2, never a crash", () => {
+    // Both were read outside the try/catch, so `vramfit -v check` printed a
+    // raw V8 stack trace and exited 1 -- the code a deploy gate reads as
+    // "does not fit". A usage mistake has to stay a usage mistake.
+    for (const argv of [
+      ["-v", "check"],
+      ["--version=abc"],
+      ["check", "llama-3.1-8b", "-d", "4090", "--help=x"],
+    ]) {
+      const { code, io } = invoke(argv);
+      expect(code, argv.join(" ")).toBe(EXIT_USAGE);
+      expect(io.errors, argv.join(" ")).toMatch(/^vramfit: /);
+      expect(io.output, argv.join(" ")).toBe("");
+    }
+  });
+
+  it("prints help for --help wherever it appears, and exits 0", () => {
+    const early = invoke(["--help", "check"]);
+    expect(early.code).toBe(EXIT_OK);
+    expect(early.io.output).toMatch(/USAGE/);
+    expect(early.io.errors).toBe("");
+
+    const late = invoke(["check", "llama-3.1-8b", "--help"]);
+    expect(late.code).toBe(EXIT_OK);
+    expect(late.io.output).toMatch(/USAGE/);
+  });
+
   it("accepts a value-less flag before the model, as every other CLI does", () => {
     const { code, io } = invoke(["check", "--json", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"]);
     expect(code).toBe(EXIT_OK);

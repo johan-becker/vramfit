@@ -82,6 +82,26 @@ const cases = [
     exit: 2,
     expectStderr: [/Unknown option "--ctxx"/],
   },
+  {
+    // A bad --version used to escape the CLI's own error handling and be
+    // reported by Node as an uncaught exception with exit 1 -- the code that
+    // means "does not fit" to a deploy gate.
+    name: "misused --version is a usage error, not a crash",
+    argv: ["-v", "check"],
+    exit: 2,
+    expectStderr: [/^vramfit: /m],
+    rejectStderr: [/^\s+at /m, /UsageError:/],
+  },
+  {
+    name: "flag before the model name",
+    argv: ["check", "--json", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"],
+    exit: 0,
+    json: (payload) => {
+      if (payload.model.id !== "llama-3.1-8b") {
+        throw new Error(`--json before the model lost it: ${JSON.stringify(payload.model)}`);
+      }
+    },
+  },
 ];
 
 let failures = 0;
@@ -99,6 +119,9 @@ for (const testCase of cases) {
   }
   for (const pattern of testCase.expectStderr ?? []) {
     if (!pattern.test(result.stderr)) problems.push(`stderr did not match ${pattern}`);
+  }
+  for (const pattern of testCase.rejectStderr ?? []) {
+    if (pattern.test(result.stderr)) problems.push(`stderr matched ${pattern}, which it must not`);
   }
   if (testCase.json) {
     try {
