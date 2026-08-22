@@ -32,6 +32,20 @@ function source(bytes: Uint8Array, size?: number): RecordingSource {
   return new RecordingSource(bytes, size);
 }
 
+/** A metadata value that is an array of arrays, `levels` of them deep. */
+function nestedArray(levels: number): GgufFixtureValue {
+  return levels === 0 ? arr("uint32", [u32(1)]) : arr("array", [nestedArray(levels - 1)]);
+}
+
+/** The smallest readable header carrying one such value. */
+function nestedArrayHeader(levels: number): Uint8Array {
+  return new GgufBuilder()
+    .kv("general.architecture", str("llama"))
+    .kv("a.deep", nestedArray(levels))
+    .tensor("token_embd.weight", [8, 16], 0)
+    .build();
+}
+
 describe("readGgufHeader", () => {
   it("reads the magic, version and counts", () => {
     const bytes = new GgufBuilder()
@@ -274,17 +288,7 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     // walk it, so a small crafted header reached the stack limit and threw a
     // RangeError with no file name, no offset and no help line -- exactly
     // what "fail with a clear diagnostic" is supposed to prevent.
-    const nest = (levels: number): GgufFixtureValue =>
-      levels === 0 ? arr("uint32", [u32(1)]) : arr("array", [nest(levels - 1)]);
-
-    const build = (levels: number): Uint8Array =>
-      new GgufBuilder()
-        .kv("general.architecture", str("llama"))
-        .kv("a.deep", nest(levels))
-        .tensor("token_embd.weight", [8, 16], 0)
-        .build();
-
-    const deep = build(200);
+    const deep = nestedArrayHeader(200);
     expect(() => readGgufHeader(source(deep))).toThrow(GgufError);
     expect(() => readGgufHeader(source(deep))).toThrow(
       /metadata "a\.deep".* nests arrays more than 64 deep/,
@@ -295,7 +299,7 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     );
 
     // Two levels is as deep as a real file goes, and still reads.
-    const shallow = build(1);
+    const shallow = nestedArrayHeader(1);
     expect(readGgufHeader(source(shallow)).metadata.has("a.deep")).toBe(true);
     expect(() => readGgufHeader(source(shallow), { maxArrayDepth: 1 })).toThrow(
       /nests arrays more than 1 deep/,
