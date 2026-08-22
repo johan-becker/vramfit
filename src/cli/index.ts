@@ -1,6 +1,19 @@
 import { readFileSync, statSync } from "node:fs";
-import { getDevice, getModel, listDevices, listModels, parseDeviceSpec, parseModelSpec } from "../db/index.js";
-import { compareDevices, parseDeviceList, type DeviceCandidate } from "../compare.js";
+import {
+  findDevice,
+  getDevice,
+  getModel,
+  listDevices,
+  listModels,
+  parseDeviceSpec,
+  parseModelSpec,
+} from "../db/index.js";
+import {
+  compareDevices,
+  parseDeviceEntry,
+  splitDeviceList,
+  type DeviceCandidate,
+} from "../compare.js";
 import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
 import {
   parseFleetConfig,
@@ -536,18 +549,31 @@ function runCheck(args: Args, io: Io, version: string): number {
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
-/** Resolve the `--devices 4090,3090x2,m4-max` list `compare` works from. */
-function resolveDeviceList(args: Args): DeviceCandidate[] {
+/**
+ * Resolve the `--devices 4090,3090x2,m4-max` list `compare` works from.
+ *
+ * The whole token is tried as a device name before the `xN` count is split
+ * off, because the two are the same shape: `rtx4090` is an alias and `4090x2`
+ * is two cards, and splitting first amputates the alias into `rt`. Only a
+ * token that names nothing is parsed for a count.
+ *
+ * An entry without a count takes `defaultGpus`, which is where `--gpus` gets
+ * its say -- `compare` accepts the flag, and a flag this command accepted and
+ * then ignored would answer a different question from the one that was typed.
+ */
+function resolveDeviceList(args: Args, defaultGpus: number): DeviceCandidate[] {
   const raw = args.string("devices");
   if (raw === undefined) {
     throw new UsageError(
       '--devices is required, as a comma-separated list: --devices 4090,3090x2,m4-max. Try "vramfit devices" for the bundled list.',
     );
   }
-  return parseDeviceList(raw).map((entry) => ({
-    device: getDevice(entry.query),
-    gpus: entry.gpus,
-  }));
+  return splitDeviceList(raw).map((entry): DeviceCandidate => {
+    const whole = findDevice(entry);
+    if (whole !== undefined) return { device: whole, gpus: defaultGpus };
+    const parsed = parseDeviceEntry(entry, defaultGpus);
+    return { device: getDevice(parsed.query), gpus: parsed.gpus };
+  });
 }
 
 function runCompare(args: Args, io: Io, version: string): number {
@@ -557,8 +583,8 @@ function runCompare(args: Args, io: Io, version: string): number {
   const source = resolveModelSource(args, io);
   const model = source.model;
   const quant = resolveQuant(args, source);
-  const candidates = resolveDeviceList(args);
   const options = fitOptions(args);
+  const candidates = resolveDeviceList(args, options.gpus ?? 1);
   const ctx = options.ctx ?? model.defaultCtx;
 
   const rows = compareDevices(model, quant, candidates, options);
