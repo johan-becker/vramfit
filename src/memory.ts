@@ -265,7 +265,11 @@ export function computeActivationBytes(
   const flashAttention = options.flashAttention ?? true;
   const bpa = options.bytesPerActivation ?? 2;
 
-  const tokensInFlight = Math.min(ctx, physicalBatch) * batch;
+  // `n_ubatch` is the width of one graph pass in tokens, counted across every
+  // sequence sharing the batch -- not per sequence. Serving 32 sequences at
+  // ubatch 512 still evaluates 512 tokens per pass, so the graph does not grow
+  // with `--batch`; only the FP32 logit buffer below does.
+  const tokensInFlight = Math.min(ctx * batch, physicalBatch);
 
   const ffnWidth = model.moe
     ? model.moe.expertFfnHidden * (model.moe.expertsPerToken + model.moe.nSharedExperts)
