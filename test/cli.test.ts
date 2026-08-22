@@ -334,6 +334,19 @@ describe("vramfit check", () => {
         .errors,
     ).toMatch(/bad\.json is not valid JSON/);
   });
+
+  it("names the file that would not parse without quoting what is in it", () => {
+    // A mistyped path in a CI step must not echo the head of whatever file was
+    // named into the build log; V8's own JSON.parse message quotes the first
+    // ten bytes of the input.
+    const { code, io } = invoke(["check", "--model-json", "secrets.env", "-d", "4090"], {
+      "secrets.env": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG\n",
+    });
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/secrets\.env is not valid JSON/);
+    expect(io.errors).not.toMatch(/AWS_SECRET/);
+    expect(io.errors).not.toMatch(/wJalrXUtnFEMI/);
+  });
 });
 
 describe("vramfit best", () => {
