@@ -67,6 +67,25 @@ export type {
   GgufValue,
 } from "./gguf/index.js";
 
+export {
+  HfConfigError,
+  SAFETENSORS_DTYPE_BYTES,
+  SafetensorsError,
+  TORCH_DTYPE_BYTES,
+  modelFromHfConfig,
+  parseSafetensorsIndex,
+  readSafetensorsHeader,
+  textConfigOf,
+} from "./hf/index.js";
+export type {
+  HfModel,
+  HfModelOptions,
+  ParamSource,
+  SafetensorsHeader,
+  SafetensorsIndex,
+  SafetensorsTensor,
+} from "./hf/index.js";
+
 export type {
   Capacity,
   FitOptions,

@@ -323,13 +323,14 @@ Notes
 
 ### 6.2 Options
 
-`<model>` is a bundled id, name or alias — or the path to a GGUF file, which
-is read from its own header.
+`<model>` is a bundled id, name or alias — or a path: a GGUF file, or a
+HuggingFace checkpoint directory. Both are read from their own headers.
 
 | Option | Meaning |
 | --- | --- |
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
 | `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
+| `--hf-config <path>` | Read the model from a HuggingFace `config.json`; a safetensors index beside it gives the true parameter count |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
@@ -491,6 +492,47 @@ arrays, GQA/MLA/sliding-window attention and MoE expert geometry. A
 big-endian file, a v1 file, a truncated one or an unknown ggml type each fail
 by name rather than producing a plausible wrong answer.
 
+A HuggingFace checkpoint works the same way — point at the directory, or at
+its `config.json` with `--hf-config`:
+
+```console
+$ vramfit check ./Qwen3-30B-A3B/ -d m4-max --ctx 32k
+Qwen3-30B-A3B  |  Q4_K_M  |  Apple M4 Max
+=========================================
+
+Read from ./Qwen3-30B-A3B/config.json  (48 layers, 4 KV heads, parameters from model.safetensors.index.json (2 shards))
+
+FITS  -  20.80 GiB of 96.00 GiB used, 75.20 GiB free (22% utilised)
+
+Memory
+  Weights          17.23 GiB  30.53B total / 3.04B active, 4.85 effective bits/weight
+  KV cache          3.00 GiB  32K tokens, 48 layers x 4 KV heads x 128, f16
+...
+```
+
+Nothing is downloaded and no `transformers` import happens: the config is read
+from the path you give, and the parameter count comes from the safetensors
+index beside it (`metadata.total_size` divided by the checkpoint's dtype) or,
+for a single-file repository, exactly from its header's tensor shapes.
+
+What makes this more than a field rename is that the fields that matter most
+are the ones the ecosystem is least consistent about, and each way of getting
+one wrong is worth gigabytes:
+
+| Field | The trap |
+| --- | --- |
+| `num_key_value_heads` | Absent means *equal to the query heads*. Reading it as 1 undersizes a pre-GQA cache by the head count |
+| `head_dim` | Absent means `hidden_size / num_attention_heads` — except on the models that state it and disagree |
+| expert count | `num_local_experts` on Mixtral, `num_experts` on Qwen3-MoE, `n_routed_experts` on DeepSeek |
+| shared experts | Qwen publishes a combined *width*, DeepSeek publishes a *count* |
+| `sliding_window` | Set but inert on Qwen2 unless `use_sliding_window` is true — honouring it undersizes the cache |
+| `text_config` | Multimodal releases nest the decoder inside it, with the vision tower beside it |
+
+The last one has a consequence worth stating: when the weight files hold more
+parameters than the decoder in the config accounts for — a vision tower, an
+extra head — the decoder's own count is used and the difference is printed
+under *Notes*, rather than charged to a model that does not exist.
+
 User-supplied specs go through the same validator as the bundled data, which
 enforces the invariants that keep the arithmetic honest — the declared
 parameter count has to match the count the shape fields imply, query heads must
@@ -523,8 +565,13 @@ an MXFP4 checkpoint is twice the bytes for weights that were never wider than
 - The runtime context and compute buffer are **empirical**, not derived. They
   are backend- and version-dependent; treat them as ±0.3 GiB and ±50%.
 - There is no model download and no device probing. `vramfit` never touches
-  the network, at runtime or in its tests: a GGUF header is read from a path
-  you already have, and the test suite builds its GGUF fixtures byte by byte.
+  the network, at runtime or in its tests: a GGUF header or a `config.json` is
+  read from a path you already have, and the test suite builds its GGUF and
+  safetensors fixtures byte by byte.
+- A `config.json` describes an **architecture**, not a checkpoint. Its
+  parameter count leaves out biases, layer norms and rotary tables — about
+  0.003% on Llama 3.1 8B — so the weight files are preferred when they are
+  there to read.
 
 ## 8. Development
 
@@ -533,7 +580,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 329 tests across 16 files
+npm test           # vitest -- 361 tests across 18 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 
