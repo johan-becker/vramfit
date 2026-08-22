@@ -1,5 +1,11 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { readGgufHeader, type ByteSource, type GgufHeader, type GgufReadOptions } from "./reader.js";
+import {
+  GgufError,
+  readGgufHeader,
+  type ByteSource,
+  type GgufHeader,
+  type GgufReadOptions,
+} from "./reader.js";
 
 /**
  * The file-backed `ByteSource`.
@@ -20,7 +26,16 @@ export function openByteSource(path: string): FileByteSource {
   const fd = openSync(path, "r");
   let size: number;
   try {
-    size = fstatSync(fd).size;
+    // A directory opens and stats happily on macOS and Linux, and only fails
+    // at the first read -- with a bare `EISDIR` from Node, which is not a
+    // GgufError and so reaches the user with no path and no help line. Since
+    // `check ./checkpoint/` is a directory away from `check --gguf`, this is
+    // a slip worth naming rather than a case worth crashing on.
+    const stat = fstatSync(fd);
+    if (stat.isDirectory()) {
+      throw new GgufError("not a GGUF file: it is a directory");
+    }
+    size = stat.size;
   } catch (cause) {
     closeSync(fd);
     throw cause;

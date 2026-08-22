@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GGML_TYPES, ggmlBitsPerWeight, findGgmlType, isGgufArray } from "../src/gguf/format.js";
+import { openByteSource } from "../src/gguf/file.js";
 import { GgufError, readGgufHeader } from "../src/gguf/reader.js";
 import {
   GgufBuilder,
@@ -317,6 +321,40 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     // The token list is walked, not decoded: reading it costs its own bytes
     // and nothing else.
     expect(header.bytesRead).toBeLessThan(header.dataOffset + 64 * 1024);
+  });
+});
+
+/**
+ * The one test here that touches a real filesystem, because the thing it is
+ * about is the filesystem: `openSync` and `fstatSync` both succeed on a
+ * directory, and only the first read fails. Nothing is downloaded and nothing
+ * is written; a temporary directory is made and removed.
+ */
+describe("openByteSource", () => {
+  it("names a directory instead of letting EISDIR out of the first read", () => {
+    const directory = mkdtempSync(join(tmpdir(), "vramfit-"));
+    try {
+      expect(() => openByteSource(directory)).toThrow(GgufError);
+      expect(() => openByteSource(directory)).toThrow(/not a GGUF file: it is a directory/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a real file it is given", () => {
+    const directory = mkdtempSync(join(tmpdir(), "vramfit-"));
+    const path = join(directory, "tiny.gguf");
+    try {
+      writeFileSync(path, llamaGgufBytes());
+      const opened = openByteSource(path);
+      try {
+        expect(readGgufHeader(opened).tensorCount).toBe(292);
+      } finally {
+        opened.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

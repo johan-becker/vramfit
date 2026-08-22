@@ -1,4 +1,5 @@
 import type { Io } from "../src/cli/index.js";
+import { GgufError } from "../src/gguf/reader.js";
 import type { ClosableByteSource, PathKind } from "../src/cli/source.js";
 
 /**
@@ -57,6 +58,11 @@ export class FakeIo implements Io {
   }
 
   openBytes(path: string): ClosableByteSource {
+    // The real opener names a directory rather than letting a bare EISDIR out
+    // of the first read; the fake has to fail the same way to be a fake.
+    if (this.directories.has(path)) {
+      throw new GgufError("not a GGUF file: it is a directory");
+    }
     const bytes = this.binary.get(path);
     if (bytes === undefined) throw new Error(`ENOENT: ${path}`);
     const closed = this.closed;
