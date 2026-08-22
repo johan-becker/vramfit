@@ -39,6 +39,9 @@ const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
   "help",
   "version",
   "flash-attn",
+  "markdown",
+  "explain",
+  "ngl",
 ]);
 
 type FlagValue = string | boolean;
@@ -173,6 +176,16 @@ export class Args {
         throw new UsageError(`Unknown option "--${name}".${hint}`);
       }
     }
+  }
+
+  /**
+   * The raw value: a string when one was given, `true` when the flag was
+   * present without one. For a flag whose value is optional -- `--launcher`
+   * meaning "all three" and `--launcher vllm` meaning one of them -- where
+   * `string()` would refuse the bare form as a missing value.
+   */
+  flag(name: string): string | boolean | undefined {
+    return this.flags.get(name);
   }
 
   string(name: string): string | undefined {
