@@ -120,7 +120,7 @@ function speedPairs(fit: FitResult): Pair[] {
     {
       label: "Time to first token",
       value: formatSeconds(fit.throughput.timeToFirstTokenSeconds),
-      note: `for a prompt of ${formatContext(fit.ctx)} tokens`,
+      note: `for a prompt of ${formatContext(fit.throughput.promptTokens)} tokens`,
     },
   );
   return pairs;
@@ -261,6 +261,7 @@ export function checkJson(
       decodeTokensPerSecond: fit.throughput.decode.tokensPerSecond,
       aggregateDecodeTokensPerSecond: fit.throughput.decode.aggregateTokensPerSecond,
       prefillTokensPerSecond: fit.throughput.prefill.tokensPerSecond,
+      promptTokens: fit.throughput.promptTokens,
       timeToFirstTokenSeconds: fit.throughput.timeToFirstTokenSeconds,
       decodeErrorBand: fit.throughput.decodeErrorBand,
       prefillErrorBand: fit.throughput.prefillErrorBand,
