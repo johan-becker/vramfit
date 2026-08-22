@@ -25,6 +25,22 @@ const SHORT_FLAGS: Readonly<Record<string, string>> = {
   v: "version",
 };
 
+/**
+ * Flags that never take a separate value, checked after short flags have been
+ * expanded to their long form.
+ *
+ * Without this list every flag reads the token after it as its value, so
+ * `vramfit check --json llama-3.1-8b -d 4090` sets `json` to the model name
+ * and then reports that no model was given. `--flag=value` and `--no-flag`
+ * still carry a value for all of them.
+ */
+const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
+  "json",
+  "help",
+  "version",
+  "flash-attn",
+]);
+
 type FlagValue = string | boolean;
 
 function looksLikeValue(token: string | undefined): boolean {
@@ -83,6 +99,10 @@ export function parseArgv(argv: readonly string[]): ParsedArgv {
     }
     if (name.startsWith("no-") && name.length > 3) {
       flags.set(name.slice(3), false);
+      continue;
+    }
+    if (VALUELESS_FLAGS.has(name)) {
+      flags.set(name, true);
       continue;
     }
     const next = argv[index + 1];

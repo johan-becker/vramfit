@@ -213,6 +213,23 @@ function fitOptions(args: Args): FitOptions {
   return options;
 }
 
+/**
+ * Refuse a positional the command has no use for.
+ *
+ * The parser gives value-less flags no separate value, so `--flash-attn false`
+ * leaves "false" standing on its own. Ignoring it would silently answer a
+ * different question from the one that was typed, which is the failure mode
+ * the whole parser is written to avoid.
+ */
+function assertNoExtraArguments(args: Args, command: string, allowed: number): void {
+  const extra = args.positionals[allowed];
+  if (extra === undefined) return;
+  const takes = allowed > 1 ? "one model name" : "no arguments";
+  throw new UsageError(
+    `Unexpected argument "${extra}". "${command}" takes ${takes}; a flag that carries a value needs it as --flag=value or --flag value.`,
+  );
+}
+
 function emit(io: Io, lines: readonly string[]): void {
   io.out(lines.join("\n"));
 }
@@ -223,6 +240,7 @@ function emitJson(io: Io, payload: unknown): void {
 
 function runCheck(args: Args, io: Io, version: string): number {
   args.assertKnown([...SHARED_FLAGS, "quant"]);
+  assertNoExtraArguments(args, "check", 2);
 
   const model = resolveModel(args, io);
   const device = resolveDevice(args, io);
@@ -242,6 +260,7 @@ function runCheck(args: Args, io: Io, version: string): number {
 
 function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
+  assertNoExtraArguments(args, "best", 2);
 
   const model = resolveModel(args, io);
   const device = resolveDevice(args, io);
@@ -259,6 +278,7 @@ function runBest(args: Args, io: Io, version: string): number {
 
 function runList(args: Args, io: Io, kind: "devices" | "models"): number {
   args.assertKnown(["json", "help"]);
+  assertNoExtraArguments(args, kind, 1);
   const asJson = args.boolean("json") === true;
 
   if (kind === "devices") {
