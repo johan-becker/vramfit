@@ -53,6 +53,25 @@ export const LLAMA_3_1_8B: ModelSpec = {
   defaultCtx: 8192,
 };
 
+/** Llama 3.2 1B: tied embeddings and a 64-wide head, the smallest of the family. */
+export const LLAMA_3_2_1B: ModelSpec = {
+  ...BASE,
+  id: "fixture-llama-3.2-1b",
+  name: "Llama 3.2 1B",
+  totalParams: 1_235_814_432,
+  activeParams: 1_235_814_432,
+  nLayers: 16,
+  hiddenSize: 2048,
+  nHeads: 32,
+  nKvHeads: 8,
+  headDim: 64,
+  ffnHidden: 8192,
+  vocabSize: 128_256,
+  tiedEmbeddings: true,
+  maxCtx: 131_072,
+  defaultCtx: 8192,
+};
+
 /**
  * The original LLaMA 7B: 32 query heads, 32 KV heads, 32000-token vocabulary.
  * It is here because it is the model llama.cpp's published benchmark tables
