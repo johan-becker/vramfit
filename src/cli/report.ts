@@ -705,6 +705,22 @@ export function recommendTableShape(rows: readonly Recommendation[]): TableShape
 }
 
 /**
+ * Where column `index` starts in a rendered table, read off the separator row.
+ *
+ * `renderTable` sizes each column to its widest cell, so the offset is not
+ * something a caller can hard-code and have stay right.
+ */
+function columnStart(separator: string, index: number): number {
+  let at = 0;
+  for (let column = 0; column < index; column++) {
+    const gap = separator.indexOf(" ", at);
+    if (gap < 0) return separator.length;
+    at = gap + 2;
+  }
+  return at;
+}
+
+/**
  * The `vramfit recommend` list.
  *
  * An aligned table would fit more rows on a screen and answer less: the point
@@ -738,9 +754,14 @@ export function renderRecommend(
 
   const [header, separator, ...body] = table;
   lines.push(header as string, separator as string);
+  // The trade-off is a continuation of its row, so it starts under the Model
+  // column: the width of the "#" column plus the two-space gap. That width is
+  // renderTable's, not a constant -- it grows to three from the tenth row on,
+  // which is every unlimited "recommend".
+  const indent = " ".repeat(columnStart(separator as string, 1));
   body.forEach((line, index) => {
     const row = rows[index];
-    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, "    ")), "");
+    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, indent)), "");
   });
 
   lines.push(
