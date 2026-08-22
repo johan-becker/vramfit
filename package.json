@@ -37,7 +37,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "TRADEMARKS.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/finish-build.mjs",
