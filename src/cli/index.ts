@@ -204,6 +204,8 @@ LAUNCHER
 
 OUTPUT
       --json               Machine-readable output.
+      --explain            Show every headline number with the arithmetic
+                           that produced it, so the maths can be checked.
       --color/--no-color   Force ANSI colour on or off. The default is on for
                            a terminal and off for a pipe, and NO_COLOR is
                            honoured.
@@ -423,7 +425,7 @@ function resolveLauncherRuntime(args: Args): LauncherRuntime | undefined {
 }
 
 function runCheck(args: Args, io: Io, version: string): number {
-  args.assertKnown([...SHARED_FLAGS, "quant", "launcher", "ngl"]);
+  args.assertKnown([...SHARED_FLAGS, "quant", "launcher", "ngl", "explain"]);
   assertNoExtraArguments(args, "check", 2);
 
   const source = resolveModelSource(args, io);
@@ -470,6 +472,7 @@ function runCheck(args: Args, io: Io, version: string): number {
       renderCheck(fit, recommendation, {
         source,
         palette: resolvePalette(args, io),
+        explain: args.boolean("explain") === true,
         ...(launcher === undefined || runtime === undefined
           ? {}
           : { launcher: { plan: launcher, runtime } }),
