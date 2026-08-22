@@ -391,6 +391,14 @@ export interface QuantSearchOptions extends FitOptions {
    * AWQ checkpoint will not load in llama.cpp and a GGUF will not load in vLLM.
    */
   families?: ReadonlySet<string>;
+  /**
+   * The format the source is already in, measured rather than looked up. A
+   * file on disk is the strongest case of `ModelSpec.nativeQuant`, and its
+   * own bits per weight -- not the table's nominal figure for the same name
+   * -- are what its row should be sized from, or `best` and `check` disagree
+   * about how much memory the same file needs.
+   */
+  nativeQuant?: QuantSpec;
 }
 
 /**
@@ -405,12 +413,20 @@ export interface QuantSearchOptions extends FitOptions {
 function candidateQuants(model: ModelSpec, options: QuantSearchOptions): QuantSpec[] {
   const families = options.families ?? GGUF_QUANT_FAMILIES;
   const ranked = quantsByQuality(families);
-  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
+  const native =
+    options.nativeQuant ??
+    (model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant));
   if (native === undefined) return ranked;
   return [
     native,
+    // The label as well as the id: a measured file quant is `file`/`Q4_K_M`,
+    // and listing the table's nominal Q4_K_M under it as a *narrower* option
+    // would show the same format twice at two different sizes.
     ...ranked.filter(
-      (quant) => quant.id !== native.id && quant.bitsPerWeight < native.bitsPerWeight,
+      (quant) =>
+        quant.id !== native.id &&
+        quant.label !== native.label &&
+        quant.bitsPerWeight < native.bitsPerWeight,
     ),
   ];
 }
