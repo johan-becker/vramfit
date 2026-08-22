@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { EXIT_OK, run } from "../src/cli/index.js";
 import { apportion, memorySegments, renderMemoryBar } from "../src/cli/bar.js";
 import { PLAIN_PALETTE, createPalette, shouldUseColor } from "../src/cli/color.js";
+import { renderExplain } from "../src/cli/explain.js";
 import { getDevice } from "../src/db/index.js";
 import { checkFit } from "../src/fit.js";
 import { getQuant } from "../src/quant.js";
 import { FakeIo } from "./fake-io.js";
-import { LLAMA_3_1_8B, LLAMA_3_1_70B } from "./fixtures.js";
+import { DEEPSEEK_V2_LITE, LLAMA_3_1_8B, LLAMA_3_1_70B, SWA_12B } from "./fixtures.js";
 
 /**
  * Presentation: the memory bar, and the rules that decide whether anything is
@@ -188,5 +189,87 @@ describe("vramfit check, coloured or not", () => {
     run(["check", "llama-3.1-8b", "-d", "4090", "--json"], io);
     expect(io.output).not.toContain(ESC);
     expect(() => JSON.parse(io.output)).not.toThrow();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* --explain                                                                   */
+/* -------------------------------------------------------------------------- */
+
+describe("renderExplain", () => {
+  it("shows the weight formula with this model's own numbers", () => {
+    const text = renderExplain(fitOf()).join("\n");
+    expect(text).toMatch(/Weights = parameters x bits per weight \/ 8/);
+    // 8,030,000,000 - 2 x 128256 x 4096 block parameters, at 4.83 bits.
+    expect(text).toMatch(/blocks\s+6,979,326,848 x 4\.83 \/ 8\s+= 3\.924 GiB/);
+    expect(text).toMatch(/token_embd\s+525,336,576 x 4\.83 \/ 8/);
+    // The output head is promoted to Q6_K by every k-quant mix.
+    expect(text).toMatch(/output\s+525,336,576 x 6\.56 \/ 8/);
+  });
+
+  it("spells the KV formula out with the KV head count, not the query count", () => {
+    const text = renderExplain(fitOf()).join("\n");
+    expect(text).toMatch(/2 x 32 x 8 x 128 x 8192 x 1 x 2\s+= 1\.000 GiB/);
+    expect(text).toMatch(/8 KV heads, not the 32 query heads/);
+    expect(text).toMatch(/the 4x mistake/);
+  });
+
+  it("adds up to the verdict the report printed", () => {
+    const fit = fitOf();
+    const text = renderExplain(fit).join("\n");
+    expect(text).toMatch(/verdict\s+6\.474 GiB <= 24\.000 GiB\s+= FITS/);
+
+    const tooBig = renderExplain(fitOf(LLAMA_3_1_70B, "4090")).join("\n");
+    expect(tooBig).toMatch(/verdict\s+[\d.]+ GiB > 24\.000 GiB\s+= DOES NOT FIT/);
+  });
+
+  it("derives the decode efficiency, and says when it did not", () => {
+    const derived = renderExplain(fitOf()).join("\n");
+    expect(derived).toMatch(/efficiency\s+0\.75 at 16 bits, less the dequantization penalty/);
+    expect(derived).toMatch(/decode\s+\d+ GB\/s \/ [\d.]+ GB\s+= \d+\.\d+ tok\/s/);
+
+    const overridden = renderExplain(fitOf(LLAMA_3_1_8B, "4090", { efficiency: 0.5 })).join("\n");
+    expect(overridden).toMatch(/efficiency\s+given with --efficiency\s+= 0\.500/);
+
+    const offloaded = renderExplain(fitOf(LLAMA_3_1_70B, "4090")).join("\n");
+    expect(offloaded).toMatch(/efficiency\s+blended across the offload split/);
+    expect(offloaded).toMatch(/harmonic mean/);
+  });
+
+  it("uses the latent formula for latent attention", () => {
+    const text = renderExplain(
+      checkFit(DEEPSEEK_V2_LITE, getQuant("q4_k_m"), getDevice("4090"), { ctx: 8192 }),
+    ).join("\n");
+    expect(text).toMatch(/KV cache = layers x \(latent \+ rope key\)/);
+    expect(text).toMatch(/27 x \(512 \+ 64\) x 8192 x 1 x 2/);
+    expect(text).not.toMatch(/KV heads/);
+  });
+
+  it("splits windowed layers from global ones", () => {
+    const text = renderExplain(
+      checkFit(SWA_12B, getQuant("q4_k_m"), getDevice("4090"), { ctx: 32_768 }),
+    ).join("\n");
+    expect(text).toMatch(/8 global\s+2 x 8 x 8 x 256 x 32768/);
+    expect(text).toMatch(/40 windowed\s+2 x 40 x 8 x 256 x 1024/);
+  });
+});
+
+describe("vramfit check --explain", () => {
+  it("appends the arithmetic to the ordinary report", () => {
+    const io = new FakeIo();
+    expect(run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--explain"], io)).toBe(
+      EXIT_OK,
+    );
+    // The report is still there, with the explanation after it.
+    expect(io.output).toMatch(/FITS {2}- {2}6\.47 GiB/);
+    expect(io.output).toMatch(/^Explain {2}\(Llama 3\.1 8B at Q4_K_M, 8K context, f16 cache\)$/m);
+    expect(io.output).toMatch(/Prefill = device FLOP\/s x MFU/);
+    for (const line of io.output.split("\n")) expect(line).toBe(line.trimEnd());
+  });
+
+  it("is absent without the flag", () => {
+    const io = new FakeIo();
+    run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"], io);
+    expect(io.output).not.toMatch(/^Explain/m);
   });
 });

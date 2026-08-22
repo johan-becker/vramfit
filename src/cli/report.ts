@@ -8,6 +8,7 @@ import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { GIB, bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import { renderMemoryBar } from "./bar.js";
 import { PLAIN_PALETTE, type Palette } from "./color.js";
+import { renderExplain } from "./explain.js";
 import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
@@ -42,6 +43,8 @@ export interface ReportOptions {
   launcher?: { plan: LauncherPlan; runtime: LauncherRuntime };
   /** Colour, when the output is going somewhere that can show it. */
   palette?: Palette;
+  /** Show every headline number with the arithmetic that produced it. */
+  explain?: boolean;
 }
 
 /**
@@ -239,6 +242,10 @@ export function renderCheck(
     `Speed (estimates: decode +/-${Math.round(fit.throughput.decodeErrorBand * 100)}%, prefill +/-${Math.round(fit.throughput.prefillErrorBand * 100)}%)`,
     ...renderPairs(speedPairs(fit)),
   );
+
+  if (options.explain === true) {
+    lines.push("", ...renderExplain(fit));
+  }
 
   const launcher = options.launcher;
   if (launcher !== undefined) {
