@@ -1,14 +1,35 @@
 /**
  * vramfit -- will this model run on my machine, and how fast?
  *
- * Public library surface. Everything here is pure arithmetic over plain data:
- * no I/O, no network, no global state.
+ * Public library surface. The arithmetic is pure: plain data in, plain data
+ * out, no network, no global state. The only I/O in the package is the lazy,
+ * memoised read of the bundled `data/*.json` database exposed below, and it
+ * only happens if you ask for a bundled model or device by name.
  */
 
 export type {
   Architecture,
 } from "./architecture.js";
 export { activeBlockFraction, deriveArchitecture } from "./architecture.js";
+
+export type { Named, Registry } from "./db/index.js";
+export {
+  SCHEMA_VERSION,
+  SpecValidationError,
+  createRegistry,
+  devices,
+  findDevice,
+  findModel,
+  getDevice,
+  getModel,
+  listDevices,
+  listModels,
+  models,
+  normalizeKey,
+  parseDatabase,
+  parseDeviceSpec,
+  parseModelSpec,
+} from "./db/index.js";
 
 export type {
   ActivationOptions,
