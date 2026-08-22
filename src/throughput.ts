@@ -288,6 +288,11 @@ export interface ThroughputOptions {
    * offload passes the blended VRAM/system-RAM figure through here.
    */
   peakBandwidthBytesPerSecond?: number;
+  /**
+   * Peak dense FP16 throughput in FLOP/s, overriding the device's own. Partial
+   * offload passes the blend of device and CPU compute through here.
+   */
+  peakFlopsPerSecond?: number;
   /** Override the derived memory-bandwidth efficiency (0-1). */
   efficiency?: number;
   /** Override the derived prefill MFU (0-1). */
@@ -346,7 +351,7 @@ export function estimateThroughput(
   const prefill = estimatePrefillFrom({
     model,
     ctx,
-    peakFlopsPerSecond: device.fp16Tflops * TFLOP,
+    peakFlopsPerSecond: options.peakFlopsPerSecond ?? device.fp16Tflops * TFLOP,
     efficiency: prefillEff,
   });
 
