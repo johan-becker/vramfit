@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ggmlBitsPerWeight, findGgmlType, isGgufArray } from "../src/gguf/format.js";
+import { GGML_TYPES, ggmlBitsPerWeight, findGgmlType, isGgufArray } from "../src/gguf/format.js";
+import { openByteSource } from "../src/gguf/file.js";
 import { GgufError, readGgufHeader } from "../src/gguf/reader.js";
 import {
   GgufBuilder,
@@ -19,6 +23,7 @@ import {
   u32,
   u64,
   u8,
+  type GgufFixtureValue,
 } from "./gguf-fixtures.js";
 
 /**
@@ -29,6 +34,20 @@ import {
 
 function source(bytes: Uint8Array, size?: number): RecordingSource {
   return new RecordingSource(bytes, size);
+}
+
+/** A metadata value that is an array of arrays, `levels` of them deep. */
+function nestedArray(levels: number): GgufFixtureValue {
+  return levels === 0 ? arr("uint32", [u32(1)]) : arr("array", [nestedArray(levels - 1)]);
+}
+
+/** The smallest readable header carrying one such value. */
+function nestedArrayHeader(levels: number): Uint8Array {
+  return new GgufBuilder()
+    .kv("general.architecture", str("llama"))
+    .kv("a.deep", nestedArray(levels))
+    .tensor("token_embd.weight", [8, 16], 0)
+    .build();
 }
 
 describe("readGgufHeader", () => {
@@ -267,6 +286,30 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     expect(header.bytesRead / fileBytes).toBeLessThan(0.0001);
   });
 
+  it("refuses an array nested deeper than the limit, rather than overflowing", () => {
+    // Every other bound in this reader is enforced; nesting was the one that
+    // was not. Each level costs 12 bytes in the file and one stack frame to
+    // walk it, so a small crafted header reached the stack limit and threw a
+    // RangeError with no file name, no offset and no help line -- exactly
+    // what "fail with a clear diagnostic" is supposed to prevent.
+    const deep = nestedArrayHeader(200);
+    expect(() => readGgufHeader(source(deep))).toThrow(GgufError);
+    expect(() => readGgufHeader(source(deep))).toThrow(
+      /metadata "a\.deep".* nests arrays more than 64 deep/,
+    );
+    // The walk that skips undecoded elements recurses the same way.
+    expect(() => readGgufHeader(source(deep), { maxArrayValues: 0 })).toThrow(
+      /nests arrays more than 64 deep/,
+    );
+
+    // Two levels is as deep as a real file goes, and still reads.
+    const shallow = nestedArrayHeader(1);
+    expect(readGgufHeader(source(shallow)).metadata.has("a.deep")).toBe(true);
+    expect(() => readGgufHeader(source(shallow), { maxArrayDepth: 1 })).toThrow(
+      /nests arrays more than 1 deep/,
+    );
+  });
+
   it("stays bounded even with a 128k-entry tokenizer in the header", () => {
     const bytes = llamaGgufBytes({ tokenCount: 128_256, omitVocabSize: true });
     const recording = source(bytes, 5_172_420_864 + bytes.length);
@@ -278,6 +321,40 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     // The token list is walked, not decoded: reading it costs its own bytes
     // and nothing else.
     expect(header.bytesRead).toBeLessThan(header.dataOffset + 64 * 1024);
+  });
+});
+
+/**
+ * The one test here that touches a real filesystem, because the thing it is
+ * about is the filesystem: `openSync` and `fstatSync` both succeed on a
+ * directory, and only the first read fails. Nothing is downloaded and nothing
+ * is written; a temporary directory is made and removed.
+ */
+describe("openByteSource", () => {
+  it("names a directory instead of letting EISDIR out of the first read", () => {
+    const directory = mkdtempSync(join(tmpdir(), "vramfit-"));
+    try {
+      expect(() => openByteSource(directory)).toThrow(GgufError);
+      expect(() => openByteSource(directory)).toThrow(/not a GGUF file: it is a directory/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a real file it is given", () => {
+    const directory = mkdtempSync(join(tmpdir(), "vramfit-"));
+    const path = join(directory, "tiny.gguf");
+    try {
+      writeFileSync(path, llamaGgufBytes());
+      const opened = openByteSource(path);
+      try {
+        expect(readGgufHeader(opened).tensorCount).toBe(292);
+      } finally {
+        opened.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -296,11 +373,15 @@ describe("ggml type table", () => {
   });
 
   it("has no id claimed twice", () => {
-    const ids = new Set<number>();
-    for (const type of [12, 14, 8, 1, 0, 30, 39]) {
-      expect(findGgmlType(type)).toBeDefined();
-      expect(ids.has(type)).toBe(false);
-      ids.add(type);
+    // The lookup is built with `new Map`, so a duplicate id would be resolved
+    // silently -- last entry wins -- and every tensor of the shadowed type
+    // would be sized with the wrong block layout. The table itself is what
+    // has to be asserted over; a hand-written list of distinct literals
+    // cannot fail whatever the table says.
+    expect(new Set(GGML_TYPES.map((type) => type.id)).size).toBe(GGML_TYPES.length);
+    expect(new Set(GGML_TYPES.map((type) => type.name)).size).toBe(GGML_TYPES.length);
+    for (const type of GGML_TYPES) {
+      expect(findGgmlType(type.id)?.name, type.name).toBe(type.name);
     }
   });
 });

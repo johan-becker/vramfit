@@ -140,19 +140,23 @@ function kvLines(fit: FitResult): string[] {
   } else {
     const windowCtx = Math.min(fit.ctx, window?.windowSize ?? fit.ctx);
     const perLayer = 2 * model.nKvHeads * model.headDim * perElement * fit.batch;
-    lines.push(
-      {
+    // A model that states a window and no period has no full-attention layer
+    // at all, and a "0 global = 0.000 GiB" row explains nothing.
+    if (fullLayers > 0) {
+      lines.push({
         label: `${fullLayers} global`,
         expression: `2 x ${fullLayers} x ${model.nKvHeads} x ${model.headDim} x ${fit.ctx} x ${fit.batch} x ${perElement}`,
         value: gib(perLayer * fit.ctx * fullLayers),
-      },
-      {
-        label: `${windowed} windowed`,
-        expression: `2 x ${windowed} x ${model.nKvHeads} x ${model.headDim} x ${windowCtx} x ${fit.batch} x ${perElement}`,
-        value: gib(perLayer * windowCtx * windowed),
-      },
-      { label: "total", expression: "", value: gib(footprint.kv.totalBytes) },
-    );
+      });
+    }
+    lines.push({
+      label: `${windowed} windowed`,
+      expression: `2 x ${windowed} x ${model.nKvHeads} x ${model.headDim} x ${windowCtx} x ${fit.batch} x ${perElement}`,
+      value: gib(perLayer * windowCtx * windowed),
+    });
+    if (fullLayers > 0) {
+      lines.push({ label: "total", expression: "", value: gib(footprint.kv.totalBytes) });
+    }
   }
 
   return [
@@ -175,6 +179,11 @@ function overheadLines(fit: FitResult): string[] {
       (fit.model.moe.expertsPerToken + fit.model.moe.nSharedExperts)
     : fit.model.ffnHidden;
   const tokensInFlight = Math.min(fit.ctx * fit.batch, fit.physicalBatch);
+  // The compute buffer is charged once per device, exactly like the runtime
+  // context above it. Leaving the multiplier off made the printed expression
+  // evaluate to half the printed value on a two-card fit, which is the one
+  // thing this whole section exists not to do.
+  const perDeviceSuffix = fit.gpus > 1 ? ` x ${fit.gpus} devices` : "";
 
   return [
     "  Overheads (empirical: +/-0.3 GiB on the first, +/-50% on the second)",
@@ -186,7 +195,7 @@ function overheadLines(fit: FitResult): string[] {
       },
       {
         label: "compute buffer",
-        expression: `max(64 MiB, ${tokensInFlight} x (${fit.model.hiddenSize} x 18 + ${ffnWidth} x 6) x 2 + ${fit.batch} x ${fit.model.vocabSize} x 4${fit.flashAttention ? "" : ` + ${tokensInFlight} x ${fit.ctx} x ${fit.model.nHeads} x 4`})`,
+        expression: `max(64 MiB, ${tokensInFlight} x (${fit.model.hiddenSize} x 18 + ${ffnWidth} x 6) x 2 + ${fit.batch} x ${fit.model.vocabSize} x 4${fit.flashAttention ? "" : ` + ${tokensInFlight} x ${fit.ctx} x ${fit.model.nHeads} x 4`})${perDeviceSuffix}`,
         value: gib(fit.footprint.activationBytes),
       },
     ]),

@@ -175,6 +175,28 @@ describe("vramfit check, coloured or not", () => {
     expect(io.output).not.toContain(ESC);
   });
 
+  it("accepts --color and --no-color on every command", () => {
+    // The README's options table scopes every restricted flag by name --
+    // "compare only", "check only" -- and does not scope this one. A CI
+    // wrapper that appends --no-color to everything died on exit 2 here.
+    const fleetConfig = JSON.stringify({
+      ctx: 8192,
+      machines: [{ name: "box", device: "4090" }],
+      models: ["llama-3.1-8b"],
+    });
+    const fleet = new FakeIo({ text: { "fleet.json": fleetConfig } });
+    expect(run(["fleet", "--config", "fleet.json", "--no-color"], fleet)).toBe(EXIT_OK);
+    expect(fleet.errors).toBe("");
+
+    for (const command of ["devices", "models"]) {
+      const io = new FakeIo();
+      expect(run([command, "--no-color"], io), command).toBe(EXIT_OK);
+      expect(io.errors, command).toBe("");
+      const forced = new FakeIo();
+      expect(run([command, "--color"], forced), command).toBe(EXIT_OK);
+    }
+  });
+
   it("takes --color and --no-color over both", () => {
     const forced = new FakeIo({ isTty: false, env: { NO_COLOR: "1" } });
     run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--color"], forced);
@@ -244,6 +266,19 @@ describe("renderExplain", () => {
     expect(text).toMatch(/KV cache = layers x \(latent \+ rope key\)/);
     expect(text).toMatch(/27 x \(512 \+ 64\) x 8192 x 1 x 2/);
     expect(text).not.toMatch(/KV heads/);
+  });
+
+  it("charges the compute buffer per device, and says so in the expression", () => {
+    // Both overhead lines are multiplied by the device count, so both have to
+    // show it: an expression that evaluates to half the value beside it makes
+    // a reader who checks the arithmetic conclude the tool is wrong.
+    const one = renderExplain(fitOf(LLAMA_3_1_8B, "4090", { ctx: 8192 })).join("\n");
+    expect(one).toMatch(/compute buffer\s+max\(64 MiB, 512 x .*\)\s+= 0\.153 GiB/);
+    expect(one).not.toMatch(/compute buffer.*devices/);
+
+    const two = renderExplain(fitOf(LLAMA_3_1_8B, "4090", { ctx: 8192, gpus: 2 })).join("\n");
+    expect(two).toMatch(/compute buffer\s+max\(64 MiB, 512 x .*\) x 2 devices\s+= 0\.306 GiB/);
+    expect(two).toMatch(/runtime context\s+0\.70 GiB x 2 devices\s+= 1\.400 GiB/);
   });
 
   it("splits windowed layers from global ones", () => {

@@ -1,7 +1,26 @@
 import { readFileSync, statSync } from "node:fs";
-import { getDevice, getModel, listDevices, listModels, parseDeviceSpec, parseModelSpec } from "../db/index.js";
-import { compareDevices, parseDeviceList, type DeviceCandidate } from "../compare.js";
-import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
+import {
+  findDevice,
+  getDevice,
+  getModel,
+  listDevices,
+  listModels,
+  parseDeviceSpec,
+  parseModelSpec,
+} from "../db/index.js";
+import {
+  compareDevices,
+  parseDeviceEntry,
+  splitDeviceList,
+  type DeviceCandidate,
+} from "../compare.js";
+import {
+  checkFit,
+  evaluateQuants,
+  recommendQuant,
+  type FitOptions,
+  type QuantSearchOptions,
+} from "../fit.js";
 import {
   parseFleetConfig,
   planFleet,
@@ -163,7 +182,8 @@ MODEL AND DEVICE
   -d, --device <id>        Bundled device id, name or alias, e.g. 4090,
                            "RTX 4090", m3-max. See "vramfit devices".
       --devices <list>     Comma-separated devices for "compare", each with
-                           an optional count: 4090,3090x2,m4-max.
+                           an optional count: 4090,3090x2,m4-max. An entry
+                           with no count of its own takes --gpus.
       --gguf <path>        Read the model from a GGUF file whatever it is
                            named. Only the header is read, never the weights.
       --hf-config <path>   Read the model from a HuggingFace checkpoint
@@ -314,20 +334,35 @@ function resolvePath(io: Io, path: string): ResolvedModel {
   );
 }
 
-/** Resolve the `<model>` argument, from the database or from a file. */
+/**
+ * Resolve the `<model>` argument, from the database or from a file.
+ *
+ * Two sources are refused rather than ranked, on the same grounds as `--json`
+ * with `--markdown`: preferring one silently answers a question that was not
+ * asked, and here the answer is a VRAM verdict for a different model.
+ */
 function resolveModelSource(args: Args, io: Io): ResolvedModel {
   const ggufPath = args.string("gguf");
-  if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
-
   const hfPath = args.string("hf-config");
-  if (hfPath !== undefined) return resolveHfCheckpoint(io, hfPath);
-
   const specPath = args.string("model-json");
+  const name = args.positionals[1];
+
+  const given = [
+    name === undefined ? undefined : `the model "${name}"`,
+    ggufPath === undefined ? undefined : `--gguf ${ggufPath}`,
+    hfPath === undefined ? undefined : `--hf-config ${hfPath}`,
+    specPath === undefined ? undefined : `--model-json ${specPath}`,
+  ].filter((entry): entry is string => entry !== undefined);
+
+  if (given.length > 1) {
+    throw new UsageError(`${given.join(" and ")} are different models; pick one.`);
+  }
+
+  if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
+  if (hfPath !== undefined) return resolveHfCheckpoint(io, hfPath);
   if (specPath !== undefined) {
     return { model: loadJsonFile(io, specPath, parseModelSpec), origin: "json", from: specPath };
   }
-
-  const name = args.positionals[1];
   if (name === undefined) {
     throw new UsageError("A model is required. Try \"vramfit models\" for the bundled list.");
   }
@@ -358,6 +393,21 @@ function resolveDevice(args: Args, io: Io): DeviceSpec {
     throw new UsageError("--device is required. Try \"vramfit devices\" for the bundled list.");
   }
   return getDevice(name);
+}
+
+/**
+ * Fit options plus the format the source is already in.
+ *
+ * README section 10.6: "A model released in a quantization of its own says so
+ * with nativeQuant. That format is then the default for check and the top of
+ * the best table, and wider quantizations of it are left out." A GGUF file is
+ * that case measured rather than declared, so its own bits per weight go into
+ * the search -- otherwise `best` sizes its row from the table's nominal
+ * figure while `check` sizes the same file from the file, and the two
+ * commands report different totals for one checkpoint.
+ */
+function quantSearchOptions(options: FitOptions, source: ResolvedModel): QuantSearchOptions {
+  return source.quant === undefined ? options : { ...options, nativeQuant: source.quant };
 }
 
 function fitOptions(args: Args): FitOptions {
@@ -495,7 +545,10 @@ function runCheck(args: Args, io: Io, version: string): number {
     return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
   }
 
-  const recommendation = recommendQuant(model, device, options);
+  // The Capacity line answers "best quant that fits", and a file already in
+  // one cannot be requantized upwards: without its own format in hand the
+  // report offered F16 for a Q4_K_M file, which does not exist.
+  const recommendation = recommendQuant(model, device, quantSearchOptions(options, source));
   const runtime = resolveLauncherRuntime(args);
   const launcher: LauncherPlan | undefined =
     runtime === undefined
@@ -536,18 +589,31 @@ function runCheck(args: Args, io: Io, version: string): number {
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
-/** Resolve the `--devices 4090,3090x2,m4-max` list `compare` works from. */
-function resolveDeviceList(args: Args): DeviceCandidate[] {
+/**
+ * Resolve the `--devices 4090,3090x2,m4-max` list `compare` works from.
+ *
+ * The whole token is tried as a device name before the `xN` count is split
+ * off, because the two are the same shape: `rtx4090` is an alias and `4090x2`
+ * is two cards, and splitting first amputates the alias into `rt`. Only a
+ * token that names nothing is parsed for a count.
+ *
+ * An entry without a count takes `defaultGpus`, which is where `--gpus` gets
+ * its say -- `compare` accepts the flag, and a flag this command accepted and
+ * then ignored would answer a different question from the one that was typed.
+ */
+function resolveDeviceList(args: Args, defaultGpus: number): DeviceCandidate[] {
   const raw = args.string("devices");
   if (raw === undefined) {
     throw new UsageError(
       '--devices is required, as a comma-separated list: --devices 4090,3090x2,m4-max. Try "vramfit devices" for the bundled list.',
     );
   }
-  return parseDeviceList(raw).map((entry) => ({
-    device: getDevice(entry.query),
-    gpus: entry.gpus,
-  }));
+  return splitDeviceList(raw).map((entry): DeviceCandidate => {
+    const whole = findDevice(entry);
+    if (whole !== undefined) return { device: whole, gpus: defaultGpus };
+    const parsed = parseDeviceEntry(entry, defaultGpus);
+    return { device: getDevice(parsed.query), gpus: parsed.gpus };
+  });
 }
 
 function runCompare(args: Args, io: Io, version: string): number {
@@ -557,8 +623,8 @@ function runCompare(args: Args, io: Io, version: string): number {
   const source = resolveModelSource(args, io);
   const model = source.model;
   const quant = resolveQuant(args, source);
-  const candidates = resolveDeviceList(args);
   const options = fitOptions(args);
+  const candidates = resolveDeviceList(args, options.gpus ?? 1);
   const ctx = options.ctx ?? model.defaultCtx;
 
   const rows = compareDevices(model, quant, candidates, options);
@@ -642,7 +708,11 @@ function resolveFleetEntry(
 }
 
 function runFleet(args: Args, io: Io, version: string): number {
-  args.assertKnown(["config", "json", "markdown", "help"]);
+  // `color` is a no-op for this renderer, which emits no escapes, but the
+  // README scopes every restricted flag by name and does not scope this one:
+  // a CI wrapper that appends --no-color to everything should not die on the
+  // one command README section 7.3 sells as the CI command.
+  args.assertKnown(["config", "json", "markdown", "color", "help"]);
   assertNoExtraArguments(args, "fleet", 1);
 
   const path = args.string("config");
@@ -690,7 +760,7 @@ function runBest(args: Args, io: Io, version: string): number {
   const model = source.model;
   const device = resolveDevice(args, io);
   const options = fitOptions(args);
-  const evaluated = evaluateQuants(model, device, options);
+  const evaluated = evaluateQuants(model, device, quantSearchOptions(options, source));
   const ctx = options.ctx ?? model.defaultCtx;
 
   switch (resolveFormat(args)) {
@@ -707,7 +777,7 @@ function runBest(args: Args, io: Io, version: string): number {
 }
 
 function runList(args: Args, io: Io, kind: "devices" | "models"): number {
-  args.assertKnown(["json", "markdown", "help"]);
+  args.assertKnown(["json", "markdown", "color", "help"]);
   assertNoExtraArguments(args, kind, 1);
   const format = resolveFormat(args);
 

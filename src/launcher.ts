@@ -66,7 +66,10 @@ export interface OllamaPlan {
   numGpu: number;
   numCtx: number;
   numBatch: number;
-  /** `PARAMETER` lines for a Modelfile. */
+  /**
+   * `FROM` and `PARAMETER` lines for a Modelfile, and nothing else: pasting
+   * anything Ollama does not take there makes `ollama create` reject the file.
+   */
   modelfile: string[];
   /** The same settings as the `options` object of an API request. */
   options: Record<string, number>;
@@ -91,13 +94,32 @@ export interface VllmPlan {
   command: string;
 }
 
+/** A runtime a note can be about. `all` is a selection, never a subject. */
+export type NoteRuntime = Exclude<LauncherRuntime, "all">;
+
+export interface LauncherNote {
+  text: string;
+  /** The runtimes this note is about, so a narrowed report can filter it. */
+  runtimes: readonly NoteRuntime[];
+}
+
 export interface LauncherPlan {
   llamaCpp: LlamaCppPlan;
   ollama: OllamaPlan;
   vllm: VllmPlan;
   /** Anything about these flags that would otherwise surprise you. */
   notes: string[];
+  /**
+   * The same notes, each tagged with the runtimes it is about. `notes` is this
+   * list's text in the same order, so the two cannot drift; the JSON payload
+   * keeps the untagged form, and a report narrowed with `--launcher vllm`
+   * filters on the tags.
+   */
+  runtimeNotes: readonly LauncherNote[];
 }
+
+/** The quant families that only exist inside a GGUF file. */
+const GGUF_FAMILIES: ReadonlySet<string> = new Set(["gguf-k", "gguf-legacy"]);
 
 /** llama.cpp's own default `--ubatch-size`; printing it would be noise. */
 const DEFAULT_UBATCH = 512;
@@ -109,6 +131,14 @@ const DEFAULT_UBATCH = 512;
 const MAX_GPU_MEMORY_UTILIZATION = 0.95;
 /** Below this vLLM cannot allocate a usable number of KV blocks. */
 const MIN_GPU_MEMORY_UTILIZATION = 0.1;
+/**
+ * The quantized cache types Ollama's `OLLAMA_KV_CACHE_TYPE` accepts. llama.cpp
+ * takes q5_1, q5_0 and q4_1 as well; Ollama does not, and printing one of them
+ * puts a value in the environment that its daemon rejects.
+ */
+const OLLAMA_CACHE_TYPES: ReadonlySet<string> = new Set(["q8_0", "q4_0"]);
+/** Cache types that need no flag anywhere, because they are the default. */
+const UNQUANTIZED_CACHE_TYPES: ReadonlySet<string> = new Set(["f16", "bf16"]);
 
 /**
  * `-ngl`.
@@ -154,18 +184,26 @@ function vllmCacheDtype(kvQuantId: string): string | null {
   return "fp8";
 }
 
-/** vLLM's `--quantization`, for the formats it loads by name. */
-function vllmQuantization(family: string): string | null {
+/**
+ * vLLM's `--quantization`, for the formats it loads by name.
+ *
+ * `gguf` describes the *file*, not the weights, so it is only right when the
+ * path being served is a GGUF one. A safetensors checkpoint or a bare
+ * `<org/model>` carrying a GGUF-family quant would be told to load a format
+ * it is not in -- a command that looks right and fails at load, which is the
+ * outcome the placeholder rules above exist to avoid.
+ */
+function vllmQuantization(family: string, servesGguf: boolean): string | null {
   if (family === "awq") return "awq";
   if (family === "gptq") return "gptq";
-  if (family === "gguf-k" || family === "gguf-legacy") return "gguf";
+  if (family === "gguf-k" || family === "gguf-legacy") return servesGguf ? "gguf" : null;
   return null;
 }
 
 function llamaCppPlan(fit: FitResult, options: LauncherOptions): LlamaCppPlan {
   const nGpuLayers = gpuLayersFor(fit);
   const ubatch = fit.physicalBatch;
-  const cacheType = fit.kvQuant.id === "f16" || fit.kvQuant.id === "bf16" ? null : fit.kvQuant.id;
+  const cacheType = UNQUANTIZED_CACHE_TYPES.has(fit.kvQuant.id) ? null : fit.kvQuant.id;
 
   const args = [
     "-m",
@@ -204,19 +242,20 @@ function ollamaPlan(fit: FitResult, options: LauncherOptions): OllamaPlan {
     `PARAMETER num_gpu ${numGpu}`,
     `PARAMETER num_ctx ${fit.ctx}`,
   ];
-  if (fit.batch > 1) modelfile.push(`PARAMETER num_parallel ${fit.batch}`);
   if (fit.physicalBatch !== DEFAULT_UBATCH) {
     modelfile.push(`PARAMETER num_batch ${fit.physicalBatch}`);
   }
 
-  // Ollama keeps these two out of the Modelfile: they are process-wide.
+  // Everything below is process-wide, so Ollama takes it from the environment
+  // and not from a Modelfile -- concurrency included: `num_parallel` is not a
+  // Modelfile parameter, and `ollama create` refuses a file that carries one.
   const environment = [`OLLAMA_FLASH_ATTENTION=${fit.flashAttention ? 1 : 0}`];
-  if (fit.kvQuant.id !== "f16" && fit.kvQuant.id !== "bf16") {
+  if (fit.batch > 1) environment.push(`OLLAMA_NUM_PARALLEL=${fit.batch}`);
+  if (OLLAMA_CACHE_TYPES.has(fit.kvQuant.id)) {
     environment.push(`OLLAMA_KV_CACHE_TYPE=${fit.kvQuant.id}`);
   }
 
   const numericOptions: Record<string, number> = { num_gpu: numGpu, num_ctx: fit.ctx };
-  if (fit.batch > 1) numericOptions["num_parallel"] = fit.batch;
 
   return {
     numGpu,
@@ -231,10 +270,14 @@ function ollamaPlan(fit: FitResult, options: LauncherOptions): OllamaPlan {
 function vllmPlan(fit: FitResult, options: LauncherOptions): VllmPlan {
   const gpuMemoryUtilization = gpuMemoryUtilizationFor(fit);
   const kvCacheDtype = vllmCacheDtype(fit.kvQuant.id);
-  const quantization = vllmQuantization(fit.quant.family);
+  const served = options.checkpointPath ?? options.ggufPath ?? "<org/model>";
+  const quantization = vllmQuantization(
+    fit.quant.family,
+    options.checkpointPath === undefined && options.ggufPath !== undefined,
+  );
 
   const args = [
-    options.checkpointPath ?? options.ggufPath ?? "<org/model>",
+    served,
     "--max-model-len",
     String(fit.ctx),
     "--gpu-memory-utilization",
@@ -257,55 +300,84 @@ function vllmPlan(fit: FitResult, options: LauncherOptions): VllmPlan {
   };
 }
 
+/**
+ * The notes, each about the runtimes it actually concerns.
+ *
+ * `--launcher vllm` says the reader wants one runtime's answer, and three
+ * quarters of the commentary being about the other two -- naming flags that
+ * were not printed -- makes the narrowed form less useful than the default.
+ */
 function collectNotes(
   fit: FitResult,
   plan: { vllm: VllmPlan; llamaCpp: LlamaCppPlan },
   options: LauncherOptions,
-): string[] {
-  const notes: string[] = [];
+): LauncherNote[] {
+  const notes: LauncherNote[] = [];
+  const note = (runtimes: readonly NoteRuntime[], text: string): void => {
+    notes.push({ text, runtimes });
+  };
 
   if (options.ggufPath === undefined && options.checkpointPath !== undefined) {
-    notes.push(
+    note(
+      ["llama.cpp", "ollama"],
       "llama.cpp loads GGUF only, so -m is a placeholder: convert the checkpoint first with convert_hf_to_gguf.py and quantize it to the format checked above.",
     );
   }
 
   if (fit.offload !== null) {
-    notes.push(
-      `-ngl ${plan.llamaCpp.nGpuLayers} leaves ${fit.offload.plan.cpuLayers} of ${fit.model.nLayers} layers on the CPU. That is the most that fits; a higher number will load and then run out of memory.`,
+    note(
+      ["llama.cpp", "ollama"],
+      `-ngl ${plan.llamaCpp.nGpuLayers} (num_gpu to Ollama) leaves ${fit.offload.plan.cpuLayers} of ${fit.model.nLayers} layers on the CPU. That is the most that fits; a higher number will load and then run out of memory.`,
     );
     if (!fit.offload.feasible) {
-      notes.push(
+      note(
+        ["llama.cpp", "ollama"],
         `The offloaded remainder needs ${(fit.offload.systemRamRequiredBytes / GIB).toFixed(2)} GiB of system RAM and only ${(fit.offload.systemRamAvailableBytes / GIB).toFixed(2)} GiB was assumed. Pass --ram to say what the machine really has.`,
       );
     }
-    notes.push(
+    note(
+      ["vllm"],
       "vLLM does not offload to system RAM: these flags describe the memory budget, not a configuration it can serve.",
     );
   }
 
   if (plan.vllm.gpuMemoryUtilization >= MAX_GPU_MEMORY_UTILIZATION) {
-    notes.push(
+    note(
+      ["vllm"],
       `--gpu-memory-utilization is capped at ${MAX_GPU_MEMORY_UTILIZATION}: this deployment wants ${((fit.usedBytes / fit.capacity.installedBytes) * 100).toFixed(0)}% of the card, and above 95% there is no room left for CUDA graph capture and allocator fragmentation.`,
     );
   }
 
   if (plan.vllm.quantization === "gguf") {
-    notes.push(
+    note(
+      ["vllm"],
       "vLLM's GGUF loader is experimental and single-file only; the usual path is to serve the safetensors checkpoint and let --quantization pick the kernel.",
+    );
+  } else if (GGUF_FAMILIES.has(fit.quant.family)) {
+    note(
+      ["vllm"],
+      `vLLM cannot load a llama.cpp ${fit.quant.label} mix out of ${options.checkpointPath === undefined ? "a repository" : "safetensors"}, so no --quantization is given: the figures above describe the memory budget of the equivalent GGUF deployment rather than a format vLLM names.`,
     );
   }
 
   if (fit.gpus > 1) {
-    notes.push(
+    note(
+      ["llama.cpp", "vllm"],
       `llama.cpp splits by layer across the ${fit.gpus} devices, which buys capacity and not speed. vLLM's --tensor-parallel-size ${fit.gpus} does raise decode throughput; the estimate above does not model that.`,
     );
   }
 
   if (plan.llamaCpp.cacheType !== null) {
-    notes.push(
+    note(
+      ["llama.cpp"],
       `A ${plan.llamaCpp.cacheType} cache needs a build with flash attention available; llama.cpp refuses the K cache type otherwise.`,
     );
+    if (!OLLAMA_CACHE_TYPES.has(plan.llamaCpp.cacheType)) {
+      note(
+        ["ollama"],
+        `OLLAMA_KV_CACHE_TYPE takes f16, q8_0 and q4_0 only, so there is no Ollama spelling for a ${plan.llamaCpp.cacheType} cache and none is printed. Use q8_0 there, or serve this one with llama.cpp.`,
+      );
+    }
   }
 
   return notes;
@@ -316,7 +388,15 @@ export function launcherPlan(fit: FitResult, options: LauncherOptions = {}): Lau
   const llamaCpp = llamaCppPlan(fit, options);
   const ollama = ollamaPlan(fit, options);
   const vllm = vllmPlan(fit, options);
-  return { llamaCpp, ollama, vllm, notes: collectNotes(fit, { llamaCpp, vllm }, options) };
+  const runtimeNotes = collectNotes(fit, { llamaCpp, vllm }, options);
+  return { llamaCpp, ollama, vllm, notes: runtimeNotes.map((note) => note.text), runtimeNotes };
+}
+
+/** The notes about one runtime, or all of them in order for `all`. */
+export function notesFor(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
+  return plan.runtimeNotes
+    .filter((note) => runtime === "all" || note.runtimes.includes(runtime))
+    .map((note) => note.text);
 }
 
 export const LAUNCHER_RUNTIMES = ["llama.cpp", "ollama", "vllm", "all"] as const;

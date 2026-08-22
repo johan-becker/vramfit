@@ -256,12 +256,16 @@ export interface GgufModelOptions {
   origin?: string;
   /** Context to check by default. Clamped to the architecture's maximum. */
   defaultCtx?: number;
+  /**
+   * The format the file is in, as a known quantization id. A file already in
+   * a quantization is the strongest case of `ModelSpec.nativeQuant`: a wider
+   * requantization of it would be a larger file holding the same weights.
+   */
+  nativeQuant?: string;
 }
 
 /** Context vramfit checks by default when the file does not suggest one. */
 const DEFAULT_CHECK_CONTEXT = 8192;
-/** Gemma 2 writes a sliding window but no pattern; it alternates every layer. */
-const DEFAULT_SLIDING_WINDOW_PATTERN = 2;
 
 function headDimFrom(header: GgufHeader, architecture: string, hidden: number, heads: number): number {
   const fallback = Math.floor(hidden / heads);
@@ -326,19 +330,26 @@ function moeFrom(
   };
 }
 
+/**
+ * Sliding-window attention.
+ *
+ * The interleaving is only modelled when the file states its period. A window
+ * on its own means every layer is windowed, which is what the field means
+ * everywhere it appears without a pattern beside it; guessing Gemma 2's
+ * alternation for the rest halves the cache of a model that has no full
+ * layers at all.
+ */
 function attentionWindowFrom(
   header: GgufHeader,
   architecture: string,
 ): AttentionWindowSpec | null {
   const windowSize = optionalNumber(header, key(architecture, "attention.sliding_window"));
   if (windowSize === undefined || windowSize <= 0) return null;
-  const pattern =
-    optionalNumber(header, key(architecture, "attention.sliding_window_pattern")) ??
-    DEFAULT_SLIDING_WINDOW_PATTERN;
+  const pattern = optionalNumber(header, key(architecture, "attention.sliding_window_pattern"));
   // A pattern of 1 means every layer is a full-attention layer, which is the
   // same thing as no windowing at all.
-  if (pattern < 2) return null;
-  return { windowSize, fullAttentionEvery: pattern };
+  if (pattern !== undefined && pattern < 2) return null;
+  return { windowSize, fullAttentionEvery: pattern ?? null };
 }
 
 function mlaFrom(header: GgufHeader, architecture: string): MlaSpec | null {
@@ -436,6 +447,7 @@ export function modelFromGguf(header: GgufHeader, options: GgufModelOptions = {}
     // which. The architecture knows the ratio; no metadata field states it.
     draft.activeParams = deriveArchitecture(draft).activeMatmulParams;
   }
+  if (options.nativeQuant !== undefined) draft.nativeQuant = options.nativeQuant;
 
   return parseModelSpec(draft, "gguf");
 }
@@ -448,15 +460,42 @@ export interface GgufModel {
   architecture: string;
   /** `general.file_type`'s name, when the file declares a known one. */
   fileType: string | undefined;
+  /** Anything the reader had to decide, in the report's own words. */
+  notes: string[];
+}
+
+/** Anything about the file that the report should say out loud. */
+function ggufNotes(model: ModelSpec): string[] {
+  const notes: string[] = [];
+  const window = model.attentionWindow;
+  if (window !== null && window.fullAttentionEvery === null) {
+    notes.push(
+      `This file declares attention.sliding_window ${window.windowSize} and no attention.sliding_window_pattern, so every one of the ${model.nLayers} layers is sized as windowed. llama.cpp does not implement sliding-window attention for every architecture and may allocate the full context on all of them instead.`,
+    );
+  }
+  return notes;
 }
 
 /** Everything vramfit reads out of one GGUF file, in one call. */
 export function describeGguf(header: GgufHeader, options: GgufModelOptions = {}): GgufModel {
+  // The file's format is the model's native one, so `best` ranks from it and
+  // leaves the wider quantizations out -- there is no F16 to be had from a
+  // Q4_K_M file. Only a format the quantization table names can be recorded;
+  // a mix with no name of its own is described by the measured spec alone.
+  const fileType = ggufFileType(header);
+  const named = fileType === undefined ? undefined : findQuant(fileType);
+  // The model is built first so that a file with a broken shape table fails
+  // by the field it is missing rather than by the measurement that needed it.
+  const model = modelFromGguf(
+    header,
+    named === undefined ? options : { ...options, nativeQuant: named.id },
+  );
   return {
     header,
-    model: modelFromGguf(header, options),
+    model,
     quant: quantFromGguf(header),
     architecture: ggufArchitecture(header),
     fileType: ggufFileType(header),
+    notes: ggufNotes(model),
   };
 }

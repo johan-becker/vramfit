@@ -221,7 +221,9 @@ function attendedTokensAcrossLayers(model: ModelSpec, ctx: number): number {
   const window = model.attentionWindow;
   let total = 0;
   for (let layer = 0; layer < model.nLayers; layer++) {
-    const isFull = !window || (layer + 1) % window.fullAttentionEvery === 0;
+    const isFull =
+      !window ||
+      (window.fullAttentionEvery !== null && (layer + 1) % window.fullAttentionEvery === 0);
     total += isFull ? ctx : Math.min(ctx, window.windowSize);
   }
   return total;

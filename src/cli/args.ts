@@ -58,11 +58,19 @@ function looksLikeValue(token: string | undefined): boolean {
 export interface ParsedArgv {
   positionals: string[];
   flags: Map<string, FlagValue>;
+  /**
+   * How each flag was spelled on the command line, keyed by the name it
+   * normalises to. `--no-color` and `-d` reach `flags` as `color` and
+   * `device`, and a diagnostic that quotes the normalised name tells the user
+   * off for a flag they did not type.
+   */
+  spellings: Map<string, string>;
 }
 
 export function parseArgv(argv: readonly string[]): ParsedArgv {
   const positionals: string[] = [];
   const flags = new Map<string, FlagValue>();
+  const spellings = new Map<string, string>();
 
   for (let index = 0; index < argv.length; index++) {
     const token = argv[index] as string;
@@ -74,12 +82,14 @@ export function parseArgv(argv: readonly string[]): ParsedArgv {
 
     let name: string | undefined;
     let inlineValue: string | undefined;
+    let typed: string;
 
     if (token.startsWith("--")) {
       const body = token.slice(2);
       if (body === "") throw new UsageError('"--" on its own ends flag parsing; "---" is not a flag');
       const equals = body.indexOf("=");
       name = (equals >= 0 ? body.slice(0, equals) : body).toLowerCase();
+      typed = `--${equals >= 0 ? body.slice(0, equals) : body}`;
       if (equals >= 0) inlineValue = body.slice(equals + 1);
     } else if (token.startsWith("-") && token.length > 1) {
       const body = token.slice(1);
@@ -91,11 +101,17 @@ export function parseArgv(argv: readonly string[]): ParsedArgv {
       const expanded = SHORT_FLAGS[letters];
       if (expanded === undefined) throw new UsageError(`Unknown option "${token}"`);
       name = expanded;
+      typed = `-${letters}`;
       if (equals >= 0) inlineValue = body.slice(equals + 1);
     } else {
       positionals.push(token);
       continue;
     }
+
+    // `--no-x` is stored under `x`, so the spelling is recorded under the same
+    // key the flag ends up in rather than under the one that was typed.
+    const negated = inlineValue === undefined && name.startsWith("no-") && name.length > 3;
+    spellings.set(negated ? name.slice(3) : name, typed);
 
     if (inlineValue !== undefined) {
       flags.set(name, inlineValue);
@@ -118,7 +134,7 @@ export function parseArgv(argv: readonly string[]): ParsedArgv {
     }
   }
 
-  return { positionals, flags };
+  return { positionals, flags, spellings };
 }
 
 export interface NumberRules {
@@ -149,10 +165,12 @@ export function parseTokenCount(raw: string, flag: string): number {
 export class Args {
   readonly positionals: readonly string[];
   private readonly flags: ReadonlyMap<string, FlagValue>;
+  private readonly spellings: ReadonlyMap<string, string>;
 
   constructor(parsed: ParsedArgv) {
     this.positionals = parsed.positionals;
     this.flags = parsed.flags;
+    this.spellings = parsed.spellings;
   }
 
   static parse(argv: readonly string[]): Args {
@@ -174,7 +192,9 @@ export class Args {
       if (!allowed.has(name)) {
         const near = known.filter((candidate) => candidate.startsWith(name.slice(0, 3)));
         const hint = near.length > 0 ? ` Did you mean --${near.join(", --")}?` : "";
-        throw new UsageError(`Unknown option "--${name}".${hint}`);
+        // Quoted as it was typed: a rejected `--no-color` that reports
+        // `"--color"` names a flag the user never wrote.
+        throw new UsageError(`Unknown option "${this.spellings.get(name) ?? `--${name}`}".${hint}`);
       }
     }
   }

@@ -89,7 +89,10 @@ function requireBytes(io: SourceIo, path: string): ClosableByteSource {
   }
   try {
     return io.openBytes(path);
-  } catch {
+  } catch (error) {
+    // The opener has one diagnostic of its own -- a directory -- and it is
+    // more useful than "Cannot read", which is what everything else becomes.
+    if (error instanceof GgufError) throw new UsageError(`${path}: ${error.message}`);
     throw new UsageError(`Cannot read ${path}`);
   }
 }
@@ -154,6 +157,7 @@ export function resolveGgufPath(io: SourceIo, path: string): ResolvedModel {
     origin: "gguf",
     from: path,
     description: describeGgufSource(path, gguf),
+    notes: gguf.notes,
   };
 }
 

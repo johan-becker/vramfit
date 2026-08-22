@@ -220,6 +220,71 @@ describe("modelFromHfConfig", () => {
     expect(model.attentionWindow).toBeNull();
   });
 
+  it("windows every layer when the config states a window and no period", () => {
+    // Mistral 7B: sliding_window and nothing else. In transformers that means
+    // every layer is windowed; the interleaving is a Gemma property stated in
+    // sliding_window_pattern. Assuming it here put the 32K cache at 2.25 GiB,
+    // which is neither runtime's answer.
+    const MISTRAL_7B = {
+      _name_or_path: "mistralai/Mistral-7B-v0.1",
+      model_type: "mistral",
+      hidden_size: 4096,
+      intermediate_size: 14_336,
+      max_position_embeddings: 32_768,
+      num_attention_heads: 32,
+      num_hidden_layers: 32,
+      num_key_value_heads: 8,
+      sliding_window: 4096,
+      tie_word_embeddings: false,
+      torch_dtype: "bfloat16",
+      vocab_size: 32_000,
+    };
+
+    const { model, notes } = modelFromHfConfig(MISTRAL_7B);
+    expect(model.attentionWindow).toEqual({ windowSize: 4096, fullAttentionEvery: null });
+
+    const kv = computeKvCacheBytes(model, { ctx: 32_768 });
+    expect(kv.windowedLayers).toBe(32);
+    // 32 layers x 4096 tokens, not 16 of them at 32K.
+    expect(kv.totalBytes).toBe(2 * 32 * 8 * 128 * 4096 * 2);
+    expect(notes.join(" ")).toMatch(/every one of the 32 layers is sized as windowed/);
+    expect(notes.join(" ")).toMatch(/llama\.cpp does not implement sliding-window attention/);
+  });
+
+  it("reads a layer_types list that names no full-attention layer", () => {
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: Array.from({ length: 32 }, () => "sliding_attention"),
+    });
+    expect(model.attentionWindow).toEqual({ windowSize: 512, fullAttentionEvery: null });
+  });
+
+  it("ignores a window every layer_types entry contradicts", () => {
+    // Every layer full attention is not windowing at all, whatever
+    // sliding_window says beside it.
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: Array.from({ length: 32 }, () => "full_attention"),
+    });
+    expect(model.attentionWindow).toBeNull();
+  });
+
+  it("refuses a layer_types list that is not one repeating pattern", () => {
+    // vramfit models one period. A list that is not periodic is sized without
+    // a window, which overestimates the cache rather than under.
+    const layerTypes = Array.from({ length: 32 }, (_, index) =>
+      index === 0 || index === 5 || index === 31 ? "full_attention" : "sliding_attention",
+    );
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: layerTypes,
+    });
+    expect(model.attentionWindow).toBeNull();
+  });
+
   it("reads the period out of a layer_types list", () => {
     const layerTypes = Array.from({ length: 32 }, (_, index) =>
       (index + 1) % 4 === 0 ? "full_attention" : "sliding_attention",
@@ -230,6 +295,35 @@ describe("modelFromHfConfig", () => {
       layer_types: layerTypes,
     });
     expect(model.attentionWindow).toEqual({ windowSize: 512, fullAttentionEvery: 4 });
+  });
+
+  it("reads an absent tie_word_embeddings as tied, the way transformers does", () => {
+    // Every other fixture here sets the key, which is exactly the case
+    // save_pretrained does not produce: PretrainedConfig defaults it to true
+    // and to_diff_dict omits whatever equals the default, so the checkpoints
+    // that tie -- Gemma, Phi-3, several Qwen releases -- ship without it.
+    const GEMMA_2_2B = {
+      _name_or_path: "google/gemma-2-2b-it",
+      model_type: "gemma2",
+      hidden_size: 2304,
+      intermediate_size: 9216,
+      head_dim: 256,
+      num_attention_heads: 8,
+      num_hidden_layers: 26,
+      num_key_value_heads: 4,
+      max_position_embeddings: 8192,
+      torch_dtype: "bfloat16",
+      vocab_size: 256_000,
+    };
+
+    const { model, notes } = modelFromHfConfig(GEMMA_2_2B);
+    expect(model.tiedEmbeddings).toBe(true);
+    expect(notes[0]).toMatch(/does not set tie_word_embeddings/);
+
+    // Reading it as untied invents a second 256000 x 2304 matrix: +589.8M
+    // parameters, 22.6% of the model, on a key that is absent by design.
+    const untied = modelFromHfConfig({ ...GEMMA_2_2B, tie_word_embeddings: false }).model;
+    expect(untied.totalParams - model.totalParams).toBe(256_000 * 2304);
   });
 
   it("charges a tied embedding table once", () => {
@@ -283,6 +377,21 @@ describe("modelFromHfConfig with a weight count", () => {
     expect(model.totalParams).toBe(8_029_995_008);
     expect(notes[0]).toMatch(/weight files hold 11000000000 parameters but the text decoder/);
     expect(notes[0]).toMatch(/vision tower/);
+  });
+
+  it("does not blame a vision tower for weight files that are too small", () => {
+    // Only one of the two directions can be an extra head. Weight files that
+    // hold fewer parameters than the decoder needs are a wrong derivation or
+    // an incomplete checkpoint, and saying "vision tower" there names a cause
+    // that cannot produce the number it is explaining.
+    const { paramSource, notes } = modelFromHfConfig(LLAMA_31_8B, {
+      weights: { totalParams: 6_000_000_000, source: "index" },
+    });
+    expect(paramSource).toBe("architecture");
+    expect(notes[0]).toMatch(/weight files hold 6000000000 parameters but the text decoder/);
+    expect(notes[0]).not.toMatch(/vision tower/);
+    expect(notes[0]).toMatch(/cannot be an extra head/);
+    expect(notes[0]).toMatch(/tie_word_embeddings, vocab_size and torch_dtype/);
   });
 });
 
