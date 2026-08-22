@@ -1,5 +1,9 @@
 # vramfit
 
+[![CI](https://github.com/johan-becker/vramfit/actions/workflows/ci.yml/badge.svg)](https://github.com/johan-becker/vramfit/actions/workflows/ci.yml)
+[![node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](package.json)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Will this model run on my machine, and how fast?**
 
 The most-asked question in local LLM self-hosting, answered with arithmetic
@@ -348,10 +352,17 @@ npm install
 npm run lint      # oxlint
 npm run build     # tsc
 npm test          # vitest
+npm run smoke     # spawn the built binary and check its exit codes
 ```
 
 Tests never touch the network. Everything is arithmetic over fixtures and
 bundled JSON, so the suite passes offline.
+
+CI runs the whole chain on Node 20, 22 and 24 on Linux, plus Node 22 on macOS
+and Windows, and then packs the tarball, installs it into a clean project and
+runs the installed binary and library from there — which is the only way to
+catch a `files` list that forgot `dist/data` or an `exports` map a consumer
+cannot import.
 
 ## License
 
