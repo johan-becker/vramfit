@@ -58,9 +58,20 @@ export function formatParams(params: number): string {
   return `${params}`;
 }
 
-/** Context lengths read better as 8K / 128K than as 8192 / 131072. */
+/**
+ * Context lengths read better as 8K / 128K than as 8192 / 131072.
+ *
+ * "K" is 1024 here, in both branches, because that is what `parseTokenCount`
+ * accepts and what llama.cpp's `-c 32768` means. A decimal K would print the
+ * largest context that fits as "108.6K", which typed back in as `--ctx 108.6k`
+ * asks for 111206 tokens and no longer fits.
+ *
+ * The fractional form truncates rather than rounds, for the same reason: a
+ * printed capacity must never claim more than the value it came from.
+ */
 export function formatContext(tokens: number): string {
-  if (tokens >= 1024 && tokens % 1024 === 0) return `${tokens / 1024}K`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-  return `${tokens}`;
+  if (tokens < KIB) return `${tokens}`;
+  const k = tokens / KIB;
+  if (Number.isInteger(k)) return `${k}K`;
+  return `${(Math.floor(k * 10) / 10).toFixed(1)}K`;
 }
