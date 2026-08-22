@@ -98,22 +98,25 @@ $ vramfit best qwen2.5-32b -d 4090 --ctx 8k
 Qwen2.5 32B  |  NVIDIA RTX 4090
 ===============================
 
-Quant     bpw    Weights  Total at 8K  Fits  Max ctx      Decode
-------  -----  ---------  -----------  ----  -------  ----------
-F16     16.00  61.03 GiB    63.97 GiB    no        -  1.43 tok/s
-BF16    16.00  61.03 GiB    63.97 GiB    no        -  1.43 tok/s
-Q8_0     8.50  32.42 GiB    35.37 GiB    no        -  3.75 tok/s
-Q6_K     6.56  25.02 GiB    27.97 GiB    no        -  8.73 tok/s
-Q5_K_M   5.67  21.71 GiB    24.65 GiB    no     5.5K  18.9 tok/s
-Q5_K_S   5.52  21.15 GiB    24.10 GiB    no     7.8K  19.2 tok/s
-Q4_K_M   4.83  18.58 GiB    21.53 GiB   yes    18.3K  27.8 tok/s
-Q4_K_S   4.57  17.61 GiB    20.56 GiB   yes    22.3K  29.0 tok/s
-Q4_0     4.55  17.54 GiB    20.48 GiB   yes    22.6K  29.1 tok/s
-Q3_K_M   3.91  15.07 GiB    18.02 GiB   yes    32.7K  32.8 tok/s
-Q2_K     3.35  12.91 GiB    15.86 GiB   yes    41.5K  37.6 tok/s
+Quant     bpw    Weights  Total at 8K  Fits  Max ctx        Decode
+------  -----  ---------  -----------  ----  -------  ------------
+F16     16.00  61.03 GiB    63.97 GiB    no        -  1.43 tok/s *
+BF16    16.00  61.03 GiB    63.97 GiB    no        -  1.43 tok/s *
+Q8_0     8.50  32.42 GiB    35.37 GiB    no        -    3.75 tok/s
+Q6_K     6.56  25.02 GiB    27.97 GiB    no        -    8.73 tok/s
+Q5_K_M   5.67  21.71 GiB    24.65 GiB    no     5.3K    18.9 tok/s
+Q5_K_S   5.52  21.15 GiB    24.10 GiB    no     7.6K    19.2 tok/s
+Q4_K_M   4.83  18.58 GiB    21.53 GiB   yes    17.8K    27.8 tok/s
+Q4_K_S   4.57  17.61 GiB    20.56 GiB   yes    21.7K    29.0 tok/s
+Q4_0     4.55  17.54 GiB    20.48 GiB   yes    22.0K    29.1 tok/s
+Q3_K_M   3.91  15.07 GiB    18.02 GiB   yes    31.9K    32.8 tok/s
+Q2_K     3.35  12.91 GiB    15.86 GiB   yes    40.5K    37.6 tok/s
 
 Rows that do not fit show the decode speed with as many layers as possible
 offloaded to system RAM, which is what you would actually get.
+
+* the offloaded remainder needs more system RAM than the 32.00 GiB assumed
+here, so that row would not load at all. Say what you have with --ram.
 
 Recommended: Q4_K_M -- highest quality that fits at 8K, 27.8 tok/s.
   The default recommendation: best quality-per-byte in the GGUF lineup for
@@ -313,7 +316,7 @@ Notes
 | Command | Purpose | Exit |
 | --- | --- | --- |
 | `vramfit check <model> --device <d>` | Full report for one model, quant, context and device | 0 fits / 1 does not / 2 usage |
-| `vramfit best <model> --device <d>` | Every quantization ranked by quality, with max context and decode speed | 0 / 2 |
+| `vramfit best <model> --device <d>` | Every quantization ranked by quality, with max context and decode speed | 0 something fits / 1 nothing in the range fits at this context / 2 usage |
 | `vramfit devices` | List the 29 bundled devices | 0 / 2 |
 | `vramfit models` | List the 24 bundled models | 0 / 2 |
 
@@ -322,20 +325,20 @@ Notes
 | Option | Meaning |
 | --- | --- |
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
-| `-q, --quant <id>` | Weight quantization, default `q4_k_m` |
+| `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
 | `-g, --gpus <n>` | Identical devices sharing the model, default 1 |
 | `--kv-quant <id>` | `f16`, `q8_0`, `q5_1`, `q5_0`, `q4_1`, `q4_0` |
-| `--vram <GiB>` | Override the device's memory, per device |
+| `--vram <GiB>` | Usable memory per device, used as given -- not scaled again by the device's usable fraction |
 | `--ubatch <n>` | Physical batch (llama.cpp `--ubatch-size`), default 512 |
 | `--no-flash-attn` | Model the compute buffer without flash attention |
 | `--prompt <n>` | Prompt length for time-to-first-token |
 | `--ram <GiB>` | System RAM available for offloaded layers |
 | `--ram-bandwidth <GB/s>` | System RAM bandwidth, default 89.6 (DDR5-5600) |
 | `--cpu-tflops <n>` | CPU dense FP16 throughput, for offloaded prefill |
-| `--efficiency <0-1>` | Override the memory-bandwidth efficiency |
-| `--prefill-efficiency <0-1>` | Override the prefill MFU |
+| `--efficiency <0-1>` | Override the device's memory-bandwidth efficiency; offloaded layers keep their derived figure |
+| `--prefill-efficiency <0-1>` | Override the device's prefill MFU, on the same terms |
 | `--model-json <path>` | Use a model spec from a file instead of the database |
 | `--device-json <path>` | Use a device spec from a file instead of the database |
 | `--json` | Machine-readable output |
@@ -353,7 +356,42 @@ Effective bits per weight, before the embedding and output-head promotions:
 | `q5_k_m` | 5.67 | `q3_k_m` | 3.91 | | |
 | `q5_k_s` | 5.52 | `q2_k` | 3.35 | | |
 
-### 6.4 Library
+### 6.4 JSON output
+
+`--json` writes one object to stdout and nothing else, so it pipes straight
+into `jq`. Every quantity is in base units: bytes for memory, decimal bytes per
+second for bandwidth, tokens per second for rates, seconds for durations,
+tokens for context and prompt lengths. GiB appear only in the human report.
+Keys are added over time, but the ones below keep their name and meaning.
+
+`vramfit check --json`:
+
+| Key | Contents |
+| --- | --- |
+| `vramfit` | Version that produced the payload |
+| `fits` | The verdict, matching the exit code |
+| `model` | `id`, `name`, `totalParams`, `activeParams`, `nLayers`, `nKvHeads`, `headDim`, `attention`, `moe` |
+| `device` | `id`, `name`, `family`, `vramGiB`, `bandwidthGBs`, `usableFraction`, `count` |
+| `config` | `quant`, `bitsPerWeight`, `effectiveBitsPerWeight`, `ctx`, `batch`, `kvQuant` |
+| `memory` | `weightsBytes`, `kvCacheBytes`, `runtimeContextBytes`, `activationBytes` — which sum to `totalBytes` — plus `capacityBytes`, `headroomBytes`, `utilization` |
+| `capacity` | `maxContext`, `recommendedQuant` (id or `null`) |
+| `throughput` | `decodeTokensPerSecond`, `aggregateDecodeTokensPerSecond`, `prefillTokensPerSecond`, `promptTokens`, `timeToFirstTokenSeconds`, `decodeErrorBand`, `prefillErrorBand` |
+| `offload` | `null` when the model is fully resident, otherwise `gpuLayers`, `cpuLayers`, `vocabOnDevice`, `systemRamRequiredBytes`, `systemRamAvailableBytes`, `feasible`, `blendedBandwidthBytesPerSecond` |
+| `warnings` | The strings the report prints under *Notes* |
+
+`vramfit best --json` returns `vramfit`, `model`, `device`, `ctx`,
+`recommended` (a quant id or `null`) and `quants[]`, one entry per candidate
+with `id`, `label`, `bitsPerWeight`, `qualityRank`, `weightsBytes`,
+`totalBytes`, `fits`, `maxContext`, `decodeTokensPerSecond`, `offloadFeasible`
+and `systemRamRequiredBytes`. `devices --json` and `models --json` print the
+bundled `DeviceSpec[]` and `ModelSpec[]` as they are.
+
+```sh
+vramfit check llama-3.1-8b -d 4090 --ctx 32k --json \
+  | jq '.memory.totalBytes / 1073741824, .throughput.decodeTokensPerSecond'
+```
+
+### 6.5 Library
 
 ```ts
 import { checkFit, getDevice, getModel, getQuant, recommendQuant } from "vramfit";
@@ -384,7 +422,7 @@ specs. The arithmetic is pure: plain data in, plain data out, no global state.
 The only I/O in the package is a lazy, memoised read of the bundled JSON, and
 it only happens if you ask for a bundled model or device by name.
 
-### 6.5 Bundled data, and bringing your own
+### 6.6 Bundled data, and bringing your own
 
 `vramfit devices` lists 29 devices: NVIDIA RTX 3060 12GB through 5090, A100
 40/80GB, H100 80GB SXM5, L40S, AMD RX 7900 XTX, Apple M1–M4 in Pro/Max/Ultra
@@ -410,10 +448,17 @@ vramfit check --model-json ./my-finetune.json --device-json ./my-gpu.json --ctx 
 ```
 
 User-supplied specs go through the same validator as the bundled data, which
-enforces the invariants that keep the arithmetic honest — query heads must
+enforces the invariants that keep the arithmetic honest — the declared
+parameter count has to match the count the shape fields imply, query heads must
 divide evenly into KV head groups, an MLA model must carry MLA geometry, a
 router cannot pick more experts than exist — and names the exact field path
 when they do not.
+
+A model released in a quantization of its own says so with `nativeQuant`, as
+the two gpt-oss entries do. That format is then the default for `check` and the
+top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
+an MXFP4 checkpoint is twice the bytes for weights that were never wider than
+4.25 bits.
 
 ## 7. Accuracy and limitations
 
@@ -443,7 +488,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 242 tests across 12 files
+npm test           # vitest -- 278 tests across 13 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 

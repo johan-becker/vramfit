@@ -60,7 +60,16 @@ export function computeWeightBytes(model: ModelSpec, quant: QuantSpec): WeightBr
   const arch = deriveArchitecture(model);
 
   const vocabParams = arch.inputEmbedParams + arch.outputHeadParams;
-  const blockParams = Math.max(model.totalParams - vocabParams, 0);
+  const blockParams = model.totalParams - vocabParams;
+  // Clamping this to zero would turn a nonsensical spec into a plausible file
+  // size -- an 8M-parameter "8B" prints as 0.70 GiB at 745 bits per weight and
+  // reports FITS. The validator rejects such a spec first; a spec built in code
+  // that bypasses it has to fail loudly rather than be quietly repaired.
+  if (blockParams <= 0) {
+    throw new Error(
+      `${model.id}: the vocabulary tensors alone account for ${Math.round(vocabParams)} parameters, but totalParams is ${model.totalParams}, leaving nothing for the transformer blocks. Check totalParams, vocabSize and hiddenSize.`,
+    );
+  }
 
   const blockBytes = quantizedBytes(blockParams, quant.bitsPerWeight);
   // When embeddings are tied there is only one matrix on disk, and it doubles
@@ -265,7 +274,11 @@ export function computeActivationBytes(
   const flashAttention = options.flashAttention ?? true;
   const bpa = options.bytesPerActivation ?? 2;
 
-  const tokensInFlight = Math.min(ctx, physicalBatch) * batch;
+  // `n_ubatch` is the width of one graph pass in tokens, counted across every
+  // sequence sharing the batch -- not per sequence. Serving 32 sequences at
+  // ubatch 512 still evaluates 512 tokens per pass, so the graph does not grow
+  // with `--batch`; only the FP32 logit buffer below does.
+  const tokensInFlight = Math.min(ctx * batch, physicalBatch);
 
   const ffnWidth = model.moe
     ? model.moe.expertFfnHidden * (model.moe.expertsPerToken + model.moe.nSharedExperts)

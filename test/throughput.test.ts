@@ -334,6 +334,9 @@ describe("composed estimate", () => {
     );
     expect(estimate.timeToFirstTokenSeconds).toBeGreaterThan(0);
     expect(estimate.timeToFirstTokenSeconds).toBeLessThan(10);
+    // The prompt length is carried on the estimate, so a report can say what
+    // the figure is for instead of assuming it was the whole context.
+    expect(estimate.promptTokens).toBe(4000);
   });
 
   it("defaults the prompt to the whole context", () => {
@@ -347,6 +350,7 @@ describe("composed estimate", () => {
       2048 / estimate.prefill.tokensPerSecond,
       9,
     );
+    expect(estimate.promptTokens).toBe(2048);
   });
 
   it("honours explicit efficiency overrides for calibrated setups", () => {

@@ -29,9 +29,22 @@ describe("capacity", () => {
     expect(bytesToGiB(capacity.totalBytes)).toBe(72);
   });
 
-  it("multiplies by the device count and accepts a VRAM override", () => {
+  it("multiplies by the device count", () => {
     expect(computeCapacity(getDevice("rtx-3090"), { gpus: 4 }).totalBytes).toBe(96 * GIB);
-    expect(computeCapacity(getDevice("m4-max"), { vramGiB: 48 }).totalBytes).toBe(48 * GIB * 0.75);
+    expect(computeCapacity(getDevice("rtx-4090"), { vramGiB: 48, gpus: 2 }).totalBytes).toBe(
+      96 * GIB,
+    );
+  });
+
+  it("takes a VRAM override as the usable budget, not a figure to cap again", () => {
+    // The Apple device notes advertise --vram as the escape hatch from the
+    // macOS wired-memory limit, so applying that limit to it left a user who
+    // had raised iogpu.wired_limit_mb to 180 GiB looking at 135.
+    const raised = computeCapacity(getDevice("m2-ultra"), { vramGiB: 180 });
+    expect(bytesToGiB(raised.totalBytes)).toBe(180);
+    expect(bytesToGiB(raised.installedBytes)).toBe(180);
+    // Without the override the default cap still applies.
+    expect(computeCapacity(getDevice("m2-ultra")).totalBytes).toBe(192 * GIB * 0.75);
   });
 
   it("never reads a device count below one", () => {
@@ -73,6 +86,20 @@ describe("checkFit: the verdict", () => {
       expect(fit.fits, deviceId).toBe(fit.headroomBytes >= 0);
       expect(fit.fits, deviceId).toBe(fit.utilization <= 1);
     }
+  });
+
+  it("does not inflate the compute buffer with the number of sequences", () => {
+    // A batched-serving configuration: 32 sequences of 4K on one 24 GiB card.
+    // The compute buffer is one 512-token graph plus 32 FP32 logit rows, well
+    // under a GiB; charging one graph per sequence made it 4.89 GiB and turned
+    // this into a false "does not fit" with the exit code a deploy gate reads.
+    const fit = checkFit(getModel("llama-3.1-8b"), Q4, getDevice("rtx-4090"), {
+      ctx: 4096,
+      batch: 32,
+    });
+    expect(bytesToGiB(fit.footprint.activationBytes)).toBeLessThan(0.5);
+    expect(bytesToGiB(fit.usedBytes)).toBeLessThan(24);
+    expect(fit.fits).toBe(true);
   });
 
   it("defaults the context to the model's own default", () => {
@@ -160,6 +187,28 @@ describe("checkFit: partial offload", () => {
     expect(fit.offload?.systemRamAvailableBytes).toBe(64 * GIB);
   });
 
+  it("applies --efficiency to the device side only, never to system RAM", () => {
+    // An efficiency figure is calibrated by measuring a GPU-resident run, so
+    // raising it must not also speed up the DDR5 side of a split -- which the
+    // harmonic blend is dominated by. Applying it to both turned 2.22 tok/s
+    // into 4.02 tok/s, an 81% inflation from calibrating the fast path.
+    const options = { ctx: 4096, systemRamGiB: 128 };
+    const derived = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), options);
+    const calibrated = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), {
+      ...options,
+      efficiency: 0.95,
+    });
+
+    expect(derived.offload).not.toBeNull();
+    expect(calibrated.offload?.plan.cpuLayers).toBeGreaterThan(0);
+    const ratio =
+      calibrated.throughput.decode.tokensPerSecond / derived.throughput.decode.tokensPerSecond;
+    expect(ratio).toBeGreaterThan(1);
+    expect(ratio).toBeLessThan(1.15);
+    // The blended efficiency stays pulled down by the host's derived figure.
+    expect(calibrated.offload?.bandwidth.efficiency).toBeLessThan(0.7);
+  });
+
   it("assumes a stated default amount of system RAM when not told", () => {
     const assumed = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), {
       ctx: 8192,
@@ -243,6 +292,32 @@ describe("quantization search", () => {
       families: new Set(["awq", "gptq"]),
     });
     expect(awq.map((option) => option.quant.id).toSorted()).toEqual(["awq-4bit", "gptq-4bit"]);
+  });
+
+  it("offers the format a natively-quantized model actually ships in", () => {
+    // gpt-oss is released as MXFP4; a Q8_0 of it is twice the bytes for weights
+    // that were never wider than 4.25 bits. Recommending Q8_0 at 20.70 GiB over
+    // the 11.93 GiB file OpenAI publishes is the wrong answer twice over.
+    const options = evaluateQuants(getModel("gpt-oss-20b"), getDevice("rtx-4090"), {
+      ctx: 8192,
+    });
+    expect(options[0]?.quant.id).toBe("mxfp4");
+    expect(options.map((option) => option.quant.id)).not.toContain("q8_0");
+    for (const option of options) {
+      expect(option.quant.bitsPerWeight, option.quant.label).toBeLessThanOrEqual(4.25);
+    }
+
+    const best = recommendQuant(getModel("gpt-oss-20b"), getDevice("rtx-4090"), { ctx: 8192 });
+    expect(best?.quant.id).toBe("mxfp4");
+    expect(bytesToGiB(best?.fit.footprint.weights.totalBytes ?? 0)).toBeLessThan(13);
+  });
+
+  it("leaves the GGUF lineup alone for a model with no native format", () => {
+    const ids = evaluateQuants(getModel("llama-3.1-8b"), getDevice("rtx-4090")).map(
+      (option) => option.quant.id,
+    );
+    expect(ids).not.toContain("mxfp4");
+    expect(ids[0]).toBe("f16");
   });
 
   it("finds nothing when the model is far too large for the device", () => {

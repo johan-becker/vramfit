@@ -302,6 +302,8 @@ export interface ThroughputOptions {
 export interface ThroughputEstimate {
   decode: DecodeEstimate;
   prefill: PrefillEstimate;
+  /** Prompt length the time-to-first-token figure was computed from. */
+  promptTokens: number;
   /** Seconds to process `promptTokens` before the first token appears. */
   timeToFirstTokenSeconds: number;
   decodeErrorBand: number;
@@ -360,6 +362,7 @@ export function estimateThroughput(
   return {
     decode,
     prefill,
+    promptTokens,
     timeToFirstTokenSeconds:
       prefill.tokensPerSecond > 0 ? promptTokens / prefill.tokensPerSecond : Number.POSITIVE_INFINITY,
     decodeErrorBand: DECODE_ERROR_BAND,

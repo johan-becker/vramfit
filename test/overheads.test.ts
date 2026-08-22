@@ -40,6 +40,11 @@ describe("runtime context overhead", () => {
   });
 });
 
+/** Hand-computed compute buffer for LLAMA_3_1_8B: graph plus FP32 logits. */
+function llamaGraphBytes(tokensInFlight: number, batch: number): number {
+  return tokensInFlight * (4096 * 18 + 14_336 * 6) * 2 + batch * 128_256 * 4;
+}
+
 describe("activation / compute buffer", () => {
   it("matches the hand-computed graph size for Llama 3.1 8B at 8K", () => {
     // ubatch 512 tokens; 18 residual-width + 6 intermediate-width tensors:
@@ -92,10 +97,34 @@ describe("activation / compute buffer", () => {
     );
   });
 
-  it("scales the logit buffer with the logical batch", () => {
+  it("scales the logit buffer, and only the logit buffer, with the logical batch", () => {
+    // The logit buffer is one FP32 vocabulary row per sequence being scored,
+    // so four sequences cost three extra rows -- and nothing else moves.
     const b1 = computeActivationBytes(LLAMA_3_1_8B, { ctx: 8192, batch: 1 });
     const b4 = computeActivationBytes(LLAMA_3_1_8B, { ctx: 8192, batch: 4 });
-    expect(b4).toBeGreaterThan(b1 * 3.9);
+    expect(b4 - b1).toBe(3 * 128_256 * 4);
+  });
+
+  it("keeps the graph one micro-batch wide however many sequences share it", () => {
+    // ubatch is the total number of tokens evaluated in one graph pass across
+    // every sequence, not a per-sequence figure. Multiplying it by the logical
+    // batch inflated the buffer to 4.89 GiB at -b 32 and turned a 21.5 GiB
+    // configuration into a 26.2 GiB "does not fit".
+    const graph = 512 * (4096 * 18 + 14_336 * 6) * 2;
+    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 4096, batch: 32 })).toBe(
+      graph + 32 * 128_256 * 4,
+    );
+  });
+
+  it("never widens the graph beyond the tokens there are to evaluate", () => {
+    // 64 tokens across 4 sequences is 256 tokens in flight, under the 512-wide
+    // micro-batch, so the graph is sized for 256.
+    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 64, batch: 4 })).toBe(
+      llamaGraphBytes(256, 4),
+    );
+    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 4096, batch: 4 })).toBe(
+      llamaGraphBytes(512, 4),
+    );
   });
 });
 
