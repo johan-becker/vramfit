@@ -13,7 +13,7 @@
     "capacity-planning"
   ],
   "license": "Apache-2.0",
-  "author": "Johan Becker",
+  "author": "Johan Becker <jo_becker@mailbox.org> (https://github.com/johan-becker)",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -40,15 +40,24 @@
     "build": "tsc -p tsconfig.build.json && node scripts/finish-build.mjs",
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
     "lint": "oxlint --deny-warnings src test scripts",
-    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build",
+    "smoke": "node scripts/smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "oxlint": "^1.79.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johan-becker/vramfit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/johan-becker/vramfit/issues"
+  },
+  "homepage": "https://github.com/johan-becker/vramfit#readme"
 }

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every Node the package claims to support ("engines": ">=20"), on
+        # Linux; one version on macOS and Windows, because the only
+        # platform-sensitive code is the path handling that resolves the
+        # bundled JSON relative to import.meta.url.
+        os: [ubuntu-latest]
+        node: ["20", "22", "24"]
+        include:
+          - os: macos-latest
+            node: "22"
+          - os: windows-latest
+            node: "22"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Smoke-test the built binary
+        run: npm run smoke
+
+  package:
+    name: Published tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        run: npm pack --pack-destination "${RUNNER_TEMP}"
+
+      # Installing the tarball into a clean project is the only way to catch a
+      # "files" list that forgot dist/data, a bin path that does not resolve,
+      # or an exports map that a consumer cannot import. All of those pass the
+      # test suite and fail for the first person who installs the package.
+      - name: Install the tarball into a clean project
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p consumer
+          cd consumer
+          npm init -y > /dev/null
+          npm install "$(ls "${RUNNER_TEMP}"/vramfit-*.tgz)"
+
+      - name: Run the installed binary
+        working-directory: ${{ runner.temp }}/consumer
+        run: |
+          ./node_modules/.bin/vramfit --version
+          ./node_modules/.bin/vramfit check llama-3.1-8b --device 4090 --ctx 8k
+          ./node_modules/.bin/vramfit models | head -5
+
+      - name: Import the installed library
+        working-directory: ${{ runner.temp }}/consumer
+        run: |
+          node --input-type=module -e "
+            import { checkFit, getDevice, getModel, getQuant, listDevices, listModels } from 'vramfit';
+            const fit = checkFit(getModel('llama-3.1-8b'), getQuant('q4_k_m'), getDevice('4090'), { ctx: 8192 });
+            if (!fit.fits) throw new Error('expected an 8B Q4_K_M to fit a 4090');
+            if (listModels().length < 20 || listDevices().length < 20) throw new Error('bundled database missing from the tarball');
+            console.log('installed library ok:', fit.throughput.decode.tokensPerSecond.toFixed(1), 'tok/s');
+          "
+
+      - name: Verify the exit code contract
+        working-directory: ${{ runner.temp }}/consumer
+        run: |
+          if ./node_modules/.bin/vramfit check llama-3.3-70b --device 4090 --ctx 8k > /dev/null; then
+            echo "expected a non-zero exit for a model that does not fit"
+            exit 1
+          fi
+          echo "exit code contract holds"
