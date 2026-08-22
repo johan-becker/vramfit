@@ -605,6 +605,11 @@ Machines
 1 of 5 models fit nowhere: Qwen3 235B-A22B. Run "vramfit check" against the
 largest machine to see what a partial offload or a narrower quantization would
 cost.
+
+A dash means the model does not fit in that machine's device memory.
+Weights+KV is what every machine holds in common; each also pays its own
+runtime context and compute buffer, once per device. Decode figures are
+estimates, +/-25%.
 ```
 
 The cell is a decode figure rather than a tick, because "yes" and "yes at
@@ -795,10 +800,15 @@ apart.
 pasting into an issue or a README. The head of
 `check llama-3.1-8b -d 4090 --ctx 8k --markdown`, as it arrives on stdout:
 
-```markdown
+````markdown
 ### Llama 3.1 8B — Q4_K_M — NVIDIA RTX 4090
 
 **FITS** — 6.47 GiB of 24.00 GiB used, 17.53 GiB free (27% utilised)
+
+```
+███████████▓▓▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  27% of 24.00 GiB
+█ weights 4.62   ▓ KV 1.00   ▒ overhead 0.85   ░ free 17.53   (GiB)
+```
 
 | Component | Size | Assumption |
 | --- | ---: | --- |
@@ -808,7 +818,7 @@ pasting into an issue or a README. The head of
 | Compute buffer | 0.15 GiB | activations, logits and graph scratch |
 | **Total** | **6.47 GiB** | at Q4_K_M |
 | Available | 24.00 GiB | NVIDIA RTX 4090 |
-```
+````
 
 The cells come from the same place the terminal table's do, so the two cannot
 drift apart. Only three things change shape: the memory bar, the launch flags
