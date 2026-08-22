@@ -385,6 +385,26 @@ describe("vramfit best", () => {
     expect(quantColumn.at(-1)).toBe("Q2_K");
   });
 
+  it("marks rows whose offload needs more system RAM than is assumed", () => {
+    // The table's own footnote says a row that does not fit shows "what you
+    // would actually get". For F16 on a 4090 that is nothing at all: the
+    // remainder needs 40.5 GiB of host RAM against the 32 GiB assumed.
+    const { io } = invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k"]);
+    expect(io.output).toMatch(/^F16\s+16\.00\s+\S+ GiB\s+\S+ GiB\s+no\s+-\s+[\d.]+ tok\/s \*$/m);
+    expect(io.output).toMatch(/^Q4_K_M\s.*\s+yes\s+\S+\s+[\d.]+ tok\/s$/m);
+    expect(io.output).toMatch(/\* .*system RAM/);
+
+    const payload = JSON.parse(
+      invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k", "--json"]).io.output,
+    ) as { quants: { id: string; offloadFeasible: boolean }[] };
+    expect(payload.quants.find((q) => q.id === "f16")?.offloadFeasible).toBe(false);
+    expect(payload.quants.find((q) => q.id === "q4_k_m")?.offloadFeasible).toBe(true);
+
+    // With enough RAM declared, the same row is unmarked.
+    const roomy = invoke(["best", "qwen2.5-32b", "-d", "4090", "--ctx", "8k", "--ram", "128"]);
+    expect(roomy.io.output).not.toMatch(/tok\/s \*/);
+  });
+
   it("exits 1 and says what to do when nothing fits", () => {
     const { code, io } = invoke(["best", "qwen3-235b-a22b", "-d", "3060"]);
     expect(code).toBe(EXIT_DOES_NOT_FIT);

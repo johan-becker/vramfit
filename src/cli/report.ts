@@ -283,6 +283,11 @@ export function checkJson(
   };
 }
 
+/** True when the row's layer split needs more host RAM than the caller has. */
+function isOffloadInfeasible(option: QuantOption): boolean {
+  return option.fit.offload !== null && !option.fit.offload.feasible;
+}
+
 /** The `vramfit best` table: every quantization, best quality first. */
 export function renderBest(
   model: ModelSpec,
@@ -302,9 +307,13 @@ export function renderBest(
     formatBytes(option.fit.footprint.totalBytes),
     option.fit.fits ? "yes" : "no",
     option.maxContext > 0 ? formatContext(option.maxContext) : "-",
-    formatRate(option.decodeTokensPerSecond),
+    // A decode figure for a split that needs more host RAM than the tool was
+    // told about is not "what you would actually get" -- that configuration
+    // does not load at all -- so it is marked rather than printed bare.
+    `${formatRate(option.decodeTokensPerSecond)}${isOffloadInfeasible(option) ? " *" : ""}`,
   ]);
 
+  const starved = options.find(isOffloadInfeasible);
   const recommended = options.find((option) => option.fit.fits);
 
   return [
@@ -327,6 +336,12 @@ export function renderBest(
     ...(options.some((option) => !option.fit.fits)
       ? wrap(
           "Rows that do not fit show the decode speed with as many layers as possible offloaded to system RAM, which is what you would actually get.",
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(starved
+      ? wrap(
+          `* the offloaded remainder needs more system RAM than the ${formatBytes(starved.fit.offload?.systemRamAvailableBytes ?? 0)} assumed here, so that row would not load at all. Say what you have with --ram.`,
           WRAP_WIDTH,
         ).concat("")
       : []),
@@ -364,6 +379,10 @@ export function bestJson(
       fits: option.fit.fits,
       maxContext: option.maxContext,
       decodeTokensPerSecond: option.decodeTokensPerSecond,
+      // True when nothing has to be offloaded, or when the offloaded
+      // remainder fits in the system RAM the caller declared.
+      offloadFeasible: !isOffloadInfeasible(option),
+      systemRamRequiredBytes: option.fit.offload?.systemRamRequiredBytes ?? 0,
     })),
   };
 }
