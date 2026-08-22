@@ -1,0 +1,414 @@
+{
+  "schemaVersion": 1,
+  "note": "vramGiB is binary (2^30 bytes) because that is what the hardware actually has: a '24 GB' RTX 3090 reports 24576 MiB. bandwidthGBs and fp16Tflops are decimal, because that is how vendors specify them. fp16Tflops is dense throughput without structured sparsity. usableFraction is the share an inference process can allocate.",
+  "devices": [
+    {
+      "id": "rtx-3060-12gb",
+      "name": "NVIDIA RTX 3060 12GB",
+      "aliases": [
+        "3060",
+        "rtx3060"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 12,
+      "bandwidthGBs": 360,
+      "fp16Tflops": 25.5,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA GA106 spec: 192-bit GDDR6 @ 15 Gbps = 360 GB/s; 12.74 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "rtx-3090",
+      "name": "NVIDIA RTX 3090",
+      "aliases": [
+        "3090",
+        "rtx3090"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 24,
+      "bandwidthGBs": 936,
+      "fp16Tflops": 71.0,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA GA102 spec: 384-bit GDDR6X @ 19.5 Gbps = 936 GB/s; 35.6 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "rtx-4070-ti-super",
+      "name": "NVIDIA RTX 4070 Ti SUPER",
+      "aliases": [
+        "4070tis",
+        "4070-ti-super"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 16,
+      "bandwidthGBs": 672,
+      "fp16Tflops": 88.2,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA AD103 spec: 256-bit GDDR6X @ 21 Gbps = 672 GB/s; 44.1 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "rtx-4080",
+      "name": "NVIDIA RTX 4080",
+      "aliases": [
+        "4080",
+        "rtx4080"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 16,
+      "bandwidthGBs": 716.8,
+      "fp16Tflops": 97.5,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA AD103 spec: 256-bit GDDR6X @ 22.4 Gbps = 716.8 GB/s; 48.7 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "rtx-4090",
+      "name": "NVIDIA RTX 4090",
+      "aliases": [
+        "4090",
+        "rtx4090"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 24,
+      "bandwidthGBs": 1008,
+      "fp16Tflops": 165.2,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA AD102 spec: 384-bit GDDR6X @ 21 Gbps = 1008 GB/s; 82.6 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "rtx-5090",
+      "name": "NVIDIA RTX 5090",
+      "aliases": [
+        "5090",
+        "rtx5090"
+      ],
+      "family": "cuda-consumer",
+      "vramGiB": 32,
+      "bandwidthGBs": 1792,
+      "fp16Tflops": 209.5,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA GB202 spec: 512-bit GDDR7 @ 28 Gbps = 1792 GB/s; 104.8 FP32 TFLOPS. FP16 tensor throughput without structured sparsity (half the marketing '*' figure)."
+    },
+    {
+      "id": "a100-40gb",
+      "name": "NVIDIA A100 40GB",
+      "aliases": [
+        "a100",
+        "a100-40"
+      ],
+      "family": "cuda-datacenter",
+      "vramGiB": 40,
+      "bandwidthGBs": 1555,
+      "fp16Tflops": 312,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA A100 datasheet: 40 GB HBM2, 1555 GB/s, 312 TFLOPS BF16/FP16 tensor (dense)."
+    },
+    {
+      "id": "a100-80gb",
+      "name": "NVIDIA A100 80GB",
+      "aliases": [
+        "a100-80"
+      ],
+      "family": "cuda-datacenter",
+      "vramGiB": 80,
+      "bandwidthGBs": 2039,
+      "fp16Tflops": 312,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA A100 datasheet: 80 GB HBM2e, 2039 GB/s, 312 TFLOPS BF16/FP16 tensor (dense)."
+    },
+    {
+      "id": "h100-80gb",
+      "name": "NVIDIA H100 80GB SXM5",
+      "aliases": [
+        "h100",
+        "h100-sxm"
+      ],
+      "family": "cuda-datacenter",
+      "vramGiB": 80,
+      "bandwidthGBs": 3350,
+      "fp16Tflops": 989.5,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA H100 SXM datasheet: 80 GB HBM3, 3.35 TB/s, 1979 TFLOPS BF16 with sparsity = 989.5 dense."
+    },
+    {
+      "id": "l40s",
+      "name": "NVIDIA L40S",
+      "aliases": [
+        "l40"
+      ],
+      "family": "cuda-datacenter",
+      "vramGiB": 48,
+      "bandwidthGBs": 864,
+      "fp16Tflops": 362,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "NVIDIA L40S datasheet: 48 GB GDDR6 ECC, 864 GB/s, 733 TFLOPS FP16 with sparsity = 362 dense."
+    },
+    {
+      "id": "rx-7900-xtx",
+      "name": "AMD Radeon RX 7900 XTX",
+      "aliases": [
+        "7900xtx",
+        "7900-xtx"
+      ],
+      "family": "rocm",
+      "vramGiB": 24,
+      "bandwidthGBs": 960,
+      "fp16Tflops": 122.8,
+      "unifiedMemory": false,
+      "usableFraction": 1.0,
+      "source": "AMD Navi 31 spec: 384-bit GDDR6 @ 20 Gbps = 960 GB/s; 122.8 FP16 TFLOPS (dual-issue).",
+      "notes": "ROCm support for consumer cards is workable but less mature than CUDA; treat the throughput estimate as optimistic."
+    },
+    {
+      "id": "m1",
+      "name": "Apple M1",
+      "aliases": [
+        "m1-8core"
+      ],
+      "family": "metal",
+      "vramGiB": 16,
+      "bandwidthGBs": 68.25,
+      "fp16Tflops": 5.2,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M1: LPDDR4X-4266 128-bit = 68.25 GB/s; 8-core GPU, 2.6 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m1-pro",
+      "name": "Apple M1 Pro",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 32,
+      "bandwidthGBs": 200,
+      "fp16Tflops": 10.6,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M1 Pro: 200 GB/s; 16-core GPU, 5.3 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m1-max",
+      "name": "Apple M1 Max",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 64,
+      "bandwidthGBs": 400,
+      "fp16Tflops": 20.8,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M1 Max: 400 GB/s; 32-core GPU, 10.4 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m1-ultra",
+      "name": "Apple M1 Ultra",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 128,
+      "bandwidthGBs": 800,
+      "fp16Tflops": 42.0,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M1 Ultra: 800 GB/s; 64-core GPU, 21.0 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m2",
+      "name": "Apple M2",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 24,
+      "bandwidthGBs": 100,
+      "fp16Tflops": 7.2,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M2: LPDDR5-6400 128-bit = 100 GB/s; 10-core GPU, 3.6 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m2-pro",
+      "name": "Apple M2 Pro",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 32,
+      "bandwidthGBs": 200,
+      "fp16Tflops": 13.6,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M2 Pro: 200 GB/s; 19-core GPU, 6.8 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m2-max",
+      "name": "Apple M2 Max",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 96,
+      "bandwidthGBs": 400,
+      "fp16Tflops": 27.2,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M2 Max: 400 GB/s; 38-core GPU, 13.6 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m2-ultra",
+      "name": "Apple M2 Ultra",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 192,
+      "bandwidthGBs": 800,
+      "fp16Tflops": 54.4,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M2 Ultra: 800 GB/s; 76-core GPU, 27.2 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m3",
+      "name": "Apple M3",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 24,
+      "bandwidthGBs": 100,
+      "fp16Tflops": 8.2,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M3: 100 GB/s; 10-core GPU, 4.1 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m3-pro",
+      "name": "Apple M3 Pro",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 36,
+      "bandwidthGBs": 150,
+      "fp16Tflops": 14.8,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M3 Pro: 150 GB/s (narrowed from the M2 Pro's 200); 18-core GPU, 7.4 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m3-max",
+      "name": "Apple M3 Max",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 128,
+      "bandwidthGBs": 400,
+      "fp16Tflops": 32.8,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M3 Max (16-core CPU / 40-core GPU): 400 GB/s; 16.4 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. The binned 30-core-GPU M3 Max runs a 192-bit bus at 300 GB/s."
+    },
+    {
+      "id": "m3-ultra",
+      "name": "Apple M3 Ultra",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 512,
+      "bandwidthGBs": 819,
+      "fp16Tflops": 65.6,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M3 Ultra: 819 GB/s; 80-core GPU, 32.8 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. Configurable to 512 GB, which makes it the cheapest way to hold a 400B-class model in one address space."
+    },
+    {
+      "id": "m4",
+      "name": "Apple M4",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 32,
+      "bandwidthGBs": 120,
+      "fp16Tflops": 9.2,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M4: LPDDR5X-7500 128-bit = 120 GB/s; 10-core GPU, 4.6 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m4-pro",
+      "name": "Apple M4 Pro",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 64,
+      "bandwidthGBs": 273,
+      "fp16Tflops": 18.4,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M4 Pro: 273 GB/s; 20-core GPU, 9.2 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram."
+    },
+    {
+      "id": "m4-max",
+      "name": "Apple M4 Max",
+      "aliases": [],
+      "family": "metal",
+      "vramGiB": 128,
+      "bandwidthGBs": 546,
+      "fp16Tflops": 36.8,
+      "unifiedMemory": true,
+      "usableFraction": 0.75,
+      "source": "Apple M4 Max: 546 GB/s; 40-core GPU, 18.4 FP32 TFLOPS.",
+      "notes": "Unified memory. macOS caps GPU-wired memory at roughly 75% of installed RAM; raise it with `sudo sysctl iogpu.wired_limit_mb=N`, or override here with --vram. There is no M4 Ultra: the 2025 Mac Studio pairs the M4 Max with the M3 Ultra."
+    },
+    {
+      "id": "cpu-ddr4-dual",
+      "name": "Generic CPU, dual-channel DDR4-3200",
+      "aliases": [
+        "cpu",
+        "cpu-ddr4"
+      ],
+      "family": "cpu",
+      "vramGiB": 128,
+      "bandwidthGBs": 51.2,
+      "fp16Tflops": 1.0,
+      "unifiedMemory": true,
+      "usableFraction": 0.85,
+      "source": "2 channels x 64 bit x 3200 MT/s = 51.2 GB/s peak.",
+      "notes": "Real achievable bandwidth on a desktop is typically 70-80% of peak, which the efficiency factor already accounts for."
+    },
+    {
+      "id": "cpu-ddr5-dual",
+      "name": "Generic CPU, dual-channel DDR5-5600",
+      "aliases": [
+        "cpu-ddr5"
+      ],
+      "family": "cpu",
+      "vramGiB": 128,
+      "bandwidthGBs": 89.6,
+      "fp16Tflops": 1.5,
+      "unifiedMemory": true,
+      "usableFraction": 0.85,
+      "source": "2 channels x 64 bit x 5600 MT/s = 89.6 GB/s peak."
+    },
+    {
+      "id": "cpu-ddr5-8ch",
+      "name": "Generic server CPU, 8-channel DDR5-4800",
+      "aliases": [
+        "cpu-server",
+        "epyc",
+        "xeon"
+      ],
+      "family": "cpu",
+      "vramGiB": 512,
+      "bandwidthGBs": 307.2,
+      "fp16Tflops": 4.0,
+      "unifiedMemory": true,
+      "usableFraction": 0.85,
+      "source": "8 channels x 64 bit x 4800 MT/s = 307.2 GB/s peak.",
+      "notes": "Enough bandwidth to run a 70B at a usable speed on CPU alone."
+    }
+  ]
+}
