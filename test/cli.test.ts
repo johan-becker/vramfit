@@ -166,13 +166,23 @@ describe("vramfit check", () => {
     expect(payload["offload"]).toBeNull();
     expect(payload["warnings"]).toEqual([]);
 
-    const memory = payload["memory"] as Record<string, number>;
+    // The four terms must still add up to the headline number.
+    const memory = payload["memory"] as unknown as {
+      weightsBytes: number;
+      kvCacheBytes: number;
+      runtimeContextBytes: number;
+      activationBytes: number;
+      totalBytes: number;
+      capacityBytes: number;
+      headroomBytes: number;
+    };
     expect(
-      memory["weightsBytes"] +
-        memory["kvCacheBytes"] +
-        memory["runtimeContextBytes"] +
-        memory["activationBytes"],
-    ).toBeCloseTo(memory["totalBytes"] as number, 6);
+      memory.weightsBytes +
+        memory.kvCacheBytes +
+        memory.runtimeContextBytes +
+        memory.activationBytes,
+    ).toBeCloseTo(memory.totalBytes, 6);
+    expect(memory.capacityBytes - memory.totalBytes).toBeCloseTo(memory.headroomBytes, 6);
   });
 
   it("reports the offload split in JSON too", () => {
