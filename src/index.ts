@@ -59,6 +59,15 @@ export {
   quantsByQuality,
 } from "./quant.js";
 
+export type { DecodeEstimate, DecodeInput } from "./throughput.js";
+export {
+  DECODE_ERROR_BAND,
+  DEQUANT_EFFICIENCY,
+  MEMORY_BANDWIDTH_EFFICIENCY,
+  bandwidthEfficiency,
+  estimateDecodeFrom,
+} from "./throughput.js";
+
 export type {
   AttentionKind,
   AttentionWindowSpec,
