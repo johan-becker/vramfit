@@ -182,7 +182,8 @@ MODEL AND DEVICE
   -d, --device <id>        Bundled device id, name or alias, e.g. 4090,
                            "RTX 4090", m3-max. See "vramfit devices".
       --devices <list>     Comma-separated devices for "compare", each with
-                           an optional count: 4090,3090x2,m4-max.
+                           an optional count: 4090,3090x2,m4-max. An entry
+                           with no count of its own takes --gpus.
       --gguf <path>        Read the model from a GGUF file whatever it is
                            named. Only the header is read, never the weights.
       --hf-config <path>   Read the model from a HuggingFace checkpoint
