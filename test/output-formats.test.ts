@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { EXIT_OK, run } from "../src/cli/index.js";
+import { EXIT_OK, EXIT_USAGE, run } from "../src/cli/index.js";
 import { apportion, memorySegments, renderMemoryBar } from "../src/cli/bar.js";
 import { PLAIN_PALETTE, createPalette, shouldUseColor } from "../src/cli/color.js";
 import { renderExplain } from "../src/cli/explain.js";
+import { renderMarkdownTable } from "../src/cli/markdown.js";
 import { getDevice } from "../src/db/index.js";
 import { checkFit } from "../src/fit.js";
 import { getQuant } from "../src/quant.js";
@@ -271,5 +272,138 @@ describe("vramfit check --explain", () => {
     const io = new FakeIo();
     run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"], io);
     expect(io.output).not.toMatch(/^Explain/m);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* --markdown                                                                  */
+/* -------------------------------------------------------------------------- */
+
+describe("renderMarkdownTable", () => {
+  it("carries the terminal table's alignment into the separator row", () => {
+    const lines = renderMarkdownTable({
+      columns: [{ header: "Name" }, { header: "Size", align: "right" }],
+      rows: [["a", "1"]],
+    });
+    expect(lines).toEqual(["| Name | Size |", "| --- | ---: |", "| a | 1 |"]);
+  });
+
+  it("escapes a pipe rather than letting it end the cell", () => {
+    const lines = renderMarkdownTable({
+      columns: [{ header: "Model" }],
+      rows: [["Llama 3.1 8B | Q4_K_M"], ["two\nlines"]],
+    });
+    expect(lines[2]).toBe("| Llama 3.1 8B \\| Q4_K_M |");
+    expect(lines[3]).toBe("| two lines |");
+  });
+
+  it("keeps an empty header as an empty cell", () => {
+    const lines = renderMarkdownTable({
+      columns: [{ header: "" }, { header: "Device" }],
+      rows: [["->", "RTX 4090"]],
+    });
+    expect(lines[0]).toBe("|  | Device |");
+  });
+
+  it("pads a short row rather than emitting a ragged table", () => {
+    const lines = renderMarkdownTable({
+      columns: [{ header: "a" }, { header: "b" }, { header: "c" }],
+      rows: [["1"]],
+    });
+    expect(lines[2]).toBe("| 1 |  |  |");
+  });
+});
+
+/** Run a command with --markdown, and hand back what it printed. */
+function markdown(argv: string[]) {
+  const io = new FakeIo();
+  const code = run([...argv, "--markdown"], io);
+  return { code, io, text: io.output };
+}
+
+describe("vramfit --markdown", () => {
+  it("renders check as headings, tables and a fenced bar", () => {
+    const { code, text } = markdown(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"]);
+    expect(code).toBe(EXIT_OK);
+    expect(text).toMatch(/^### Llama 3\.1 8B — Q4_K_M — NVIDIA RTX 4090$/m);
+    expect(text).toMatch(/^\*\*FITS\*\* — 6\.47 GiB of 24\.00 GiB used/m);
+    expect(text).toMatch(/^\| Component \| Size \| Assumption \|$/m);
+    expect(text).toMatch(/^\| --- \| ---: \| --- \|$/m);
+    expect(text).toMatch(/^\| \*\*Total\*\* \| \*\*6\.47 GiB\*\* \| at Q4_K_M \|$/m);
+    // The bar is fixed-width art and has to stay inside a fence.
+    const fences = text.split("\n").filter((line) => line === "```");
+    expect(fences.length % 2).toBe(0);
+    expect(text).toMatch(/```\n█+▓+▒+░+/);
+  });
+
+  it("puts the offload split and the notes in as well", () => {
+    const { text } = markdown([
+      "check",
+      "llama-3.3-70b",
+      "-d",
+      "4090",
+      "--ctx",
+      "8k",
+      "--ram",
+      "64",
+    ]);
+    expect(text).toMatch(/\*\*DOES NOT FIT\*\*/);
+    expect(text).toMatch(/^\| Layers in device memory \| 44 of 80 \|/m);
+  });
+
+  it("folds --explain into a details block so the report stays readable", () => {
+    const { text } = markdown(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--explain"]);
+    expect(text).toMatch(/<details><summary>The arithmetic<\/summary>/);
+    expect(text).toMatch(/<\/details>/);
+    expect(text).toMatch(/Weights = parameters x bits per weight/);
+  });
+
+  it("fences each runtime's launch flags with its own language", () => {
+    const { text } = markdown(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--launcher"]);
+    expect(text).toMatch(/```sh\nllama-server -m <model\.gguf> -ngl 33 -c 8192 -fa on\n```/);
+    expect(text).toMatch(/```dockerfile\nFROM llama-3\.1-8b/);
+  });
+
+  it("renders best, compare, recommend and fleet as tables", () => {
+    expect(markdown(["best", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"]).text).toMatch(
+      /^\| Quant \| bpw \| Weights \| Total at 8K \| Fits \| Max ctx \| Decode \|$/m,
+    );
+    const compare = markdown([
+      "compare",
+      "llama-3.3-70b",
+      "--devices",
+      "4090,a100-80",
+      "--ctx",
+      "8k",
+    ]).text;
+    expect(compare).toMatch(/^\| -> \| NVIDIA A100 80GB \|/m);
+    expect(compare).toMatch(/\*\*Best: NVIDIA A100 80GB\*\*/);
+
+    const recommend = markdown(["recommend", "-d", "4090", "--limit", "2"]).text;
+    // The trade-off is a column here, where it cannot be one in a terminal.
+    expect(recommend).toMatch(/\| Decode \| Trade-off \|$/m);
+    expect(recommend).toMatch(/comfortably above the 15 tok\/s chat wants\. \|$/m);
+  });
+
+  it("renders the bundled lists as tables", () => {
+    const devices = markdown(["devices"]).text;
+    expect(devices.split("\n")[0]).toBe(
+      "| ID | Name | Memory | Usable | Bandwidth | FP16 | Family |",
+    );
+    expect(markdown(["models"]).text).toMatch(/^\| llama-3\.1-8b \| Llama 3\.1 8B \|/m);
+  });
+
+  it("refuses to be asked for two machine formats at once", () => {
+    const io = new FakeIo();
+    expect(run(["check", "llama-3.1-8b", "-d", "4090", "--json", "--markdown"], io)).toBe(
+      EXIT_USAGE,
+    );
+    expect(io.errors).toMatch(/--json and --markdown are two different outputs; pick one/);
+  });
+
+  it("never colours markdown, even on a terminal", () => {
+    const io = new FakeIo({ isTty: true });
+    run(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--markdown"], io);
+    expect(io.output).not.toContain(ESC);
   });
 });

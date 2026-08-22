@@ -40,6 +40,15 @@ import {
   type SourceIo,
 } from "./source.js";
 import {
+  renderBestMarkdown,
+  renderCheckMarkdown,
+  renderCompareMarkdown,
+  renderDevicesMarkdown,
+  renderFleetMarkdown,
+  renderModelsMarkdown,
+  renderRecommendMarkdown,
+} from "./markdown.js";
+import {
   bestJson,
   checkJson,
   compareJson,
@@ -204,6 +213,8 @@ LAUNCHER
 
 OUTPUT
       --json               Machine-readable output.
+      --markdown           Markdown tables, for pasting into an issue or a
+                           README. Mutually exclusive with --json.
       --explain            Show every headline number with the arithmetic
                            that produced it, so the maths can be checked.
       --color/--no-color   Force ANSI colour on or off. The default is on for
@@ -247,6 +258,7 @@ const SHARED_FLAGS = [
   "efficiency",
   "prefill-efficiency",
   "json",
+  "markdown",
   "color",
   "help",
 ] as const;
@@ -404,6 +416,26 @@ function emitJson(io: Io, payload: unknown): void {
 }
 
 /**
+ * Which of the three renderings the command was asked for.
+ *
+ * `--json` and `--markdown` are both machine-facing and mutually exclusive:
+ * silently preferring one would answer a question that was not asked, which is
+ * the failure mode the whole argument parser is written to avoid.
+ */
+type OutputFormat = "text" | "json" | "markdown";
+
+function resolveFormat(args: Args): OutputFormat {
+  const json = args.boolean("json") === true;
+  const markdown = args.boolean("markdown") === true;
+  if (json && markdown) {
+    throw new UsageError("--json and --markdown are two different outputs; pick one.");
+  }
+  if (json) return "json";
+  if (markdown) return "markdown";
+  return "text";
+}
+
+/**
  * Resolve `--launcher`.
  *
  * The value is optional -- `--launcher` on its own means all three runtimes,
@@ -464,20 +496,26 @@ function runCheck(args: Args, io: Io, version: string): number {
           modelName: model.id,
         });
 
-  if (args.boolean("json") === true) {
-    emitJson(io, checkJson(fit, recommendation, version, source, launcher));
-  } else {
-    emit(
-      io,
-      renderCheck(fit, recommendation, {
-        source,
-        palette: resolvePalette(args, io),
-        explain: args.boolean("explain") === true,
-        ...(launcher === undefined || runtime === undefined
-          ? {}
-          : { launcher: { plan: launcher, runtime } }),
-      }),
-    );
+  const reportOptions = {
+    source,
+    explain: args.boolean("explain") === true,
+    ...(launcher === undefined || runtime === undefined
+      ? {}
+      : { launcher: { plan: launcher, runtime } }),
+  };
+
+  switch (resolveFormat(args)) {
+    case "json":
+      emitJson(io, checkJson(fit, recommendation, version, source, launcher));
+      break;
+    case "markdown":
+      emit(io, renderCheckMarkdown(fit, recommendation, reportOptions));
+      break;
+    default:
+      emit(
+        io,
+        renderCheck(fit, recommendation, { ...reportOptions, palette: resolvePalette(args, io) }),
+      );
   }
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
@@ -509,10 +547,15 @@ function runCompare(args: Args, io: Io, version: string): number {
 
   const rows = compareDevices(model, quant, candidates, options);
 
-  if (args.boolean("json") === true) {
-    emitJson(io, compareJson(model, quant, rows, ctx, version));
-  } else {
-    emit(io, renderCompare(model, quant, rows, ctx, { source }));
+  switch (resolveFormat(args)) {
+    case "json":
+      emitJson(io, compareJson(model, quant, rows, ctx, version));
+      break;
+    case "markdown":
+      emit(io, renderCompareMarkdown(model, quant, rows, ctx, { source }));
+      break;
+    default:
+      emit(io, renderCompare(model, quant, rows, ctx, { source }));
   }
   return rows.some((row) => row.fit.fits) ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
@@ -539,10 +582,15 @@ function runRecommend(args: Args, io: Io, version: string): number {
   const gpus = base.gpus ?? 1;
   const rows = recommendModels(device, options);
 
-  if (args.boolean("json") === true) {
-    emitJson(io, recommendJson(device, profile, rows, ctx, gpus, version));
-  } else {
-    emit(io, renderRecommend(device, profile, rows, ctx, gpus));
+  switch (resolveFormat(args)) {
+    case "json":
+      emitJson(io, recommendJson(device, profile, rows, ctx, gpus, version));
+      break;
+    case "markdown":
+      emit(io, renderRecommendMarkdown(device, profile, rows, ctx, gpus));
+      break;
+    default:
+      emit(io, renderRecommend(device, profile, rows, ctx, gpus));
   }
   return rows.length > 0 ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
@@ -578,7 +626,7 @@ function resolveFleetEntry(
 }
 
 function runFleet(args: Args, io: Io, version: string): number {
-  args.assertKnown(["config", "json", "help"]);
+  args.assertKnown(["config", "json", "markdown", "help"]);
   assertNoExtraArguments(args, "fleet", 1);
 
   const path = args.string("config");
@@ -603,10 +651,15 @@ function runFleet(args: Args, io: Io, version: string): number {
   );
   const report = planFleet(machines, entries);
 
-  if (args.boolean("json") === true) {
-    emitJson(io, fleetJson(report, version));
-  } else {
-    emit(io, renderFleet(report));
+  switch (resolveFormat(args)) {
+    case "json":
+      emitJson(io, fleetJson(report, version));
+      break;
+    case "markdown":
+      emit(io, renderFleetMarkdown(report));
+      break;
+    default:
+      emit(io, renderFleet(report));
   }
   // Every model placed somewhere is the green case; anything homeless is the
   // one a deploy script wants to hear about.
@@ -624,26 +677,32 @@ function runBest(args: Args, io: Io, version: string): number {
   const evaluated = evaluateQuants(model, device, options);
   const ctx = options.ctx ?? model.defaultCtx;
 
-  if (args.boolean("json") === true) {
-    emitJson(io, bestJson(model, device, evaluated, ctx, version));
-  } else {
-    emit(io, renderBest(model, device, evaluated, ctx, options.gpus ?? 1, { source }));
+  switch (resolveFormat(args)) {
+    case "json":
+      emitJson(io, bestJson(model, device, evaluated, ctx, version));
+      break;
+    case "markdown":
+      emit(io, renderBestMarkdown(model, device, evaluated, ctx, options.gpus ?? 1, { source }));
+      break;
+    default:
+      emit(io, renderBest(model, device, evaluated, ctx, options.gpus ?? 1, { source }));
   }
   return evaluated.some((option) => option.fit.fits) ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
 function runList(args: Args, io: Io, kind: "devices" | "models"): number {
-  args.assertKnown(["json", "help"]);
+  args.assertKnown(["json", "markdown", "help"]);
   assertNoExtraArguments(args, kind, 1);
-  const asJson = args.boolean("json") === true;
+  const format = resolveFormat(args);
 
   if (kind === "devices") {
-    if (asJson) emitJson(io, listDevices());
-    else emit(io, renderDevices(listDevices()));
-  } else if (asJson) {
-    emitJson(io, listModels());
+    const devices = listDevices();
+    if (format === "json") emitJson(io, devices);
+    else emit(io, format === "markdown" ? renderDevicesMarkdown(devices) : renderDevices(devices));
   } else {
-    emit(io, renderModels(listModels()));
+    const models = listModels();
+    if (format === "json") emitJson(io, models);
+    else emit(io, format === "markdown" ? renderModelsMarkdown(models) : renderModels(models));
   }
   return EXIT_OK;
 }
