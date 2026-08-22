@@ -7,7 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Compute buffer no longer scales with `--batch`.** `n_ubatch` counts the
+  tokens in one graph pass across every sequence, not per sequence, so
+  `check llama-3.1-8b -d 4090 --ctx 4k -b 32` reported a 4.89 GiB compute
+  buffer and refused a configuration that needs ~21.5 GiB on a 24 GiB card.
+- **`--efficiency` and `--prefill-efficiency` apply to the device only.** They
+  were also raising the system-RAM side of a partial offload, inflating a
+  70B's blended decode estimate by 81% when a GPU measurement was passed in.
+- **Time to first token is labelled with the prompt it was computed from**,
+  not with the context length, and `promptTokens` is exposed in JSON.
+- **Context lengths print in binary K**, matching the parser, so the largest
+  context that fits can be typed back in; the fractional form truncates
+  rather than rounding up.
+- **`--vram` is the usable budget**, not another figure to scale by the
+  device's usable fraction -- which is what the Apple entries advertise it as.
+- **Value-less flags no longer swallow the next argument**, so
+  `check --json <model>` and `--json models` work; a positional the command
+  has no use for is now refused rather than ignored.
+- **A malformed `--version` or `--help` exits 2 with a message** instead of
+  escaping as an uncaught exception with a stack trace and exit 1, the code
+  that means "does not fit".
+- **A model spec's parameter count is reconciled with its architecture.** A
+  1000x typo in `totalParams` was schema-valid and produced a plausible-looking
+  weight figure and a green verdict; `computeWeightBytes` no longer clamps the
+  degenerate case into silence either.
+- **User specs are refused when they carry control characters** -- an ANSI
+  sequence in a device name could forge a verdict line in the report -- or
+  shape fields orders of magnitude beyond anything published, which used to
+  cost seconds of CPU and gigabytes of RSS.
+- **The invalid-JSON message no longer quotes the file's contents**, which
+  echoed the head of whatever file was named into the log.
+- **`best` marks rows whose offloaded remainder needs more system RAM than
+  assumed**, instead of printing a decode speed for a configuration that
+  cannot load; `offloadFeasible` and `systemRamRequiredBytes` are in the JSON.
+- **`npm run typecheck` really does cover `scripts/`**: the files were listed
+  in `tsconfig.json` but silently discarded without `allowJs`.
+- **README** documents `best`'s exit 1, the `--json` payload, and the
+  behaviour of `--vram`, `--efficiency` and `-q`.
+
+### Added
+
+- `nativeQuant` on `ModelSpec`: a model released in a quantization of its own
+  is checked in that format by default and ranked by it in `best`, and wider
+  requantizations of it are left out. Both gpt-oss entries declare MXFP4, which
+  the recommender previously ignored in favour of a Q8_0 twice its size.
 
 ## [0.1.0] - 2026-08-22
 
