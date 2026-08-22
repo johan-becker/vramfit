@@ -32,6 +32,34 @@ export {
 } from "./db/index.js";
 
 export type {
+  Capacity,
+  FitOptions,
+  FitResult,
+  OffloadResult,
+  QuantOption,
+  QuantSearchOptions,
+} from "./fit.js";
+export {
+  DEFAULT_SYSTEM_COMPUTE_TFLOPS,
+  DEFAULT_SYSTEM_RAM_BANDWIDTH_GBS,
+  DEFAULT_SYSTEM_RAM_GIB,
+  checkFit,
+  computeCapacity,
+  evaluateQuants,
+  maxContextFor,
+  recommendQuant,
+} from "./fit.js";
+
+export type {
+  BandwidthPair,
+  BlendedBandwidth,
+  BlendedCompute,
+  ComputePair,
+  OffloadPlan,
+} from "./offload.js";
+export { blendBandwidth, blendCompute, planOffload } from "./offload.js";
+
+export type {
   ActivationOptions,
   FootprintOptions,
   KvCacheBreakdown,
