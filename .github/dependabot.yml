@@ -12,7 +12,13 @@ updates:
       dev-dependencies:
         patterns: ["*"]
 
+  # Action versions are pinned by major tag; a weekly check keeps the pin from
+  # silently going stale between releases.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
