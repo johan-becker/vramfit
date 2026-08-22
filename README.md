@@ -16,8 +16,16 @@ from the query-head count instead of the KV-head count, or forgot that the
 CUDA runtime takes 0.7 GiB before a single tensor is allocated. Every formula
 here is written down with its assumption, unit-tested against a hand-computed
 value, and — where external ground truth exists — calibrated against published
-GGUF file sizes and llama.cpp benchmark tables. TypeScript, ESM, Node 20+,
-library and CLI, zero runtime dependencies.
+GGUF file sizes and llama.cpp benchmark tables.
+
+It answers the question about the checkpoint you already have, not only about
+the models it happens to know: point `check` at a GGUF file or a HuggingFace
+directory and the parameter count and the bits per weight are measured from
+that file's own tables. And it answers the three questions that follow the
+first one — which of my machines should run this (`compare`), what should I
+run on the machine I have (`recommend`), and what exactly do I type to start
+it (`--launcher`). TypeScript, ESM, Node 20+, library and CLI, zero runtime
+dependencies.
 
 ## 1. The problem
 
@@ -59,6 +67,14 @@ npm install vramfit                                       # library
 ```sh
 vramfit check "$MODEL" --device 4090 --ctx 32k --json > plan.json \
   || { echo "won't fit, refusing to deploy"; exit 1; }
+```
+
+The other three questions, in the order people ask them:
+
+```sh
+vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80  # which machine
+vramfit recommend --device 4090 --use-case code              # which model
+vramfit check llama-3.3-70b -d 4090 --ctx 8k --launcher      # what to type
 ```
 
 ## 3. A worked example
@@ -316,180 +332,16 @@ Notes
     capacity, not tokens per second.
 ```
 
-## 6. Reference
+## 6. Point it at the checkpoint
 
-### 6.1 Commands
+The bundled database is a convenience for the models everyone runs. The file
+already on your disk is the one you actually have a question about, so `check`
+takes a path wherever it takes a name — a GGUF file, or a HuggingFace
+checkpoint directory — and reads the model out of that file's own tables
+instead of looking it up. Nothing is downloaded, no `transformers` import
+happens, and neither reader touches the network.
 
-| Command | Purpose | Exit |
-| --- | --- | --- |
-| `vramfit check <model> --device <d>` | Full report for one model, quant, context and device | 0 fits / 1 does not / 2 usage |
-| `vramfit best <model> --device <d>` | Every quantization ranked by quality, with max context and decode speed | 0 something fits / 1 nothing in the range fits at this context / 2 usage |
-| `vramfit compare <model> --devices <list>` | One model on several devices, best first | 0 something fits / 1 nothing does / 2 usage |
-| `vramfit recommend --device <d>` | Every bundled model that fits, ranked, each with its trade-off | 0 something fits / 1 nothing does / 2 usage |
-| `vramfit fleet --config <file>` | Which of several machines can serve which of several models | 0 every model placed / 1 one fits nowhere / 2 usage |
-| `vramfit devices` | List the 29 bundled devices | 0 / 2 |
-| `vramfit models` | List the 24 bundled models | 0 / 2 |
-
-### 6.2 Options
-
-`<model>` is a bundled id, name or alias — or a path: a GGUF file, or a
-HuggingFace checkpoint directory. Both are read from their own headers.
-
-| Option | Meaning |
-| --- | --- |
-| `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
-| `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
-| `--hf-config <path>` | Read the model from a HuggingFace `config.json`; a safetensors index beside it gives the true parameter count |
-| `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max` |
-| `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
-| `--limit <n>` | `recommend` only: show the top n |
-| `--config <path>` | `fleet` only: the JSON description of the machines and the models |
-| `--launcher [runtime]` | Print the exact flags this fit implies: `llama.cpp`, `ollama`, `vllm`, or all three |
-| `--ngl` | Print only the llama.cpp `-ngl` value and exit, for a shell substitution |
-| `--explain` | Show every headline number with the arithmetic that produced it |
-| `--markdown` | Markdown tables, for pasting into an issue. Mutually exclusive with `--json` |
-| `--color` / `--no-color` | Force ANSI colour on or off; the default follows the terminal, and `NO_COLOR` is honoured |
-| `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
-| `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
-| `-b, --batch <n>` | Concurrent sequences, default 1 |
-| `-g, --gpus <n>` | Identical devices sharing the model, default 1 |
-| `--kv-quant <id>` | `f16`, `q8_0`, `q5_1`, `q5_0`, `q4_1`, `q4_0` |
-| `--vram <GiB>` | Usable memory per device, used as given -- not scaled again by the device's usable fraction |
-| `--ubatch <n>` | Physical batch (llama.cpp `--ubatch-size`), default 512 |
-| `--no-flash-attn` | Model the compute buffer without flash attention |
-| `--prompt <n>` | Prompt length for time-to-first-token |
-| `--ram <GiB>` | System RAM available for offloaded layers |
-| `--ram-bandwidth <GB/s>` | System RAM bandwidth, default 89.6 (DDR5-5600) |
-| `--cpu-tflops <n>` | CPU dense FP16 throughput, for offloaded prefill |
-| `--efficiency <0-1>` | Override the device's memory-bandwidth efficiency; offloaded layers keep their derived figure |
-| `--prefill-efficiency <0-1>` | Override the device's prefill MFU, on the same terms |
-| `--model-json <path>` | Use a model spec from a file instead of the database |
-| `--device-json <path>` | Use a device spec from a file instead of the database |
-| `--json` | Machine-readable output |
-| `-h, --help` / `-v, --version` | Usage text / version |
-
-### 6.3 Quantizations
-
-Effective bits per weight, before the embedding and output-head promotions:
-
-| Quant | bpw | Quant | bpw | Quant | bpw |
-| --- | ---: | --- | ---: | --- | ---: |
-| `f16` / `bf16` | 16.00 | `q4_k_m` | 4.83 | `mxfp4` | 4.25 |
-| `q8_0` | 8.50 | `q4_k_s` | 4.57 | `awq-4bit` | 4.25 |
-| `q6_k` | 6.56 | `q4_0` | 4.55 | `gptq-4bit` | 4.25 |
-| `q5_k_m` | 5.67 | `q3_k_m` | 3.91 | | |
-| `q5_k_s` | 5.52 | `q2_k` | 3.35 | | |
-
-### 6.4 JSON output
-
-`--json` writes one object to stdout and nothing else, so it pipes straight
-into `jq`. Every computed quantity is in base units: bytes for memory, decimal
-bytes per second for bandwidth, tokens per second for rates, seconds for
-durations, tokens for context and prompt lengths — GiB appear only in the human
-report. The `device` block is the stored spec, where the field name carries the
-unit (`vramGiB`, `bandwidthGBs`). Keys are added over time, but the ones below
-keep their name and meaning.
-
-`vramfit check --json`:
-
-| Key | Contents |
-| --- | --- |
-| `vramfit` | Version that produced the payload |
-| `fits` | The verdict, matching the exit code |
-| `model` | `id`, `name`, `origin` (`database`, `gguf`, `huggingface` or `json`), `from` (the path or id it was read from), `totalParams`, `activeParams`, `nLayers`, `nKvHeads`, `headDim`, `attention`, `moe` |
-| `device` | `id`, `name`, `family`, `vramGiB`, `bandwidthGBs`, `usableFraction`, `count` |
-| `config` | `quant`, `bitsPerWeight`, `effectiveBitsPerWeight`, `ctx`, `batch`, `kvQuant` |
-| `memory` | `weightsBytes`, `kvCacheBytes`, `runtimeContextBytes`, `activationBytes` — which sum to `totalBytes` — plus `capacityBytes`, `headroomBytes`, `utilization` |
-| `capacity` | `maxContext`, `recommendedQuant` (id or `null`) |
-| `throughput` | `decodeTokensPerSecond`, `aggregateDecodeTokensPerSecond`, `prefillTokensPerSecond`, `promptTokens`, `timeToFirstTokenSeconds`, `decodeErrorBand`, `prefillErrorBand` |
-| `offload` | `null` when the model is fully resident, otherwise `gpuLayers`, `cpuLayers`, `vocabOnDevice`, `systemRamRequiredBytes`, `systemRamAvailableBytes`, `feasible`, `blendedBandwidthBytesPerSecond` |
-| `warnings` | The strings the report prints under *Notes* |
-
-`--launcher` adds a `launcher` key to `check --json` — `llamaCpp`, `ollama`
-and `vllm`, each with its own fields plus an `args` array and a `command`
-string, and the `notes` the report prints beside them. The key is absent
-without the flag.
-
-`vramfit compare --json` returns `vramfit`, `model`, `config`, `best` (a
-device id or `null`) and `devices[]` in the table's own order, each with
-`capacityBytes`, `totalBytes`, `headroomBytes`, `utilization`, `fits`,
-`maxContext`, `decodeTokensPerSecond`, `offloadFeasible` and `best`.
-`recommend --json` returns `device`, `useCase` (`id`, `ctx`,
-`comfortableDecodeTokensPerSecond`) and `models[]` with the three ranking
-factors — `capability`, `quality`, `speed` — beside the `score` they multiply
-to, so the ranking can be recomputed or argued with. `fleet --json` returns
-`machines[]` and `models[]`, each model carrying `servedBy` and one entry per
-machine.
-
-`vramfit best --json` returns `vramfit`, `model`, `device`, `ctx`,
-`recommended` (a quant id or `null`) and `quants[]`, one entry per candidate
-with `id`, `label`, `bitsPerWeight`, `qualityRank`, `weightsBytes`,
-`totalBytes`, `fits`, `maxContext`, `decodeTokensPerSecond`, `offloadFeasible`
-and `systemRamRequiredBytes`. `devices --json` and `models --json` print the
-bundled `DeviceSpec[]` and `ModelSpec[]` as they are.
-
-```sh
-vramfit check llama-3.1-8b -d 4090 --ctx 32k --json \
-  | jq '.memory.totalBytes / 1073741824, .throughput.decodeTokensPerSecond'
-```
-
-### 6.5 Library
-
-```ts
-import { checkFit, getDevice, getModel, getQuant, recommendQuant } from "vramfit";
-
-const fit = checkFit(getModel("llama-3.1-8b"), getQuant("q4_k_m"), getDevice("4090"), {
-  ctx: 32_768,
-});
-
-fit.fits;                               // true
-fit.headroomBytes;                      // 15597252060.16
-fit.utilization;                        // 0.3947469606002172
-fit.maxContext;                         // 131072
-fit.footprint.kv.totalBytes;            // 4294967296
-fit.throughput.decode.tokensPerSecond;  // 67.4244625650359
-fit.offload;                            // null -- it is fully resident
-fit.warnings;                           // []
-
-recommendQuant(getModel("qwen2.5-32b"), getDevice("4090"), { ctx: 8192 })?.quant.label;
-// "Q4_K_M"
-```
-
-Every layer is exported and usable on its own — `computeWeightBytes`,
-`computeKvCacheBytes`, `computeActivationBytes`, `computeFootprint`,
-`estimateThroughput`, `planOffload`, `blendBandwidth`, `maxContextFor`,
-`evaluateQuants`, `deriveArchitecture` — along with the quantization tables,
-the device and model registries, and the validators that parse user-supplied
-specs. The arithmetic is pure: plain data in, plain data out, no global state.
-The only I/O in the package is a lazy, memoised read of the bundled JSON, and
-it only happens if you ask for a bundled model or device by name.
-
-### 6.6 Bundled data, and bringing your own
-
-`vramfit devices` lists 29 devices: NVIDIA RTX 3060 12GB through 5090, A100
-40/80GB, H100 80GB SXM5, L40S, AMD RX 7900 XTX, Apple M1–M4 in Pro/Max/Ultra
-variants with their unified-memory bandwidth and the macOS wired-memory limit,
-and generic CPU tiers from dual-channel DDR4-3200 to 8-channel DDR5-4800.
-
-`vramfit models` lists 24 models: Llama 3.1/3.2/3.3 (1B–70B), Qwen 2.5 (7B–72B),
-Qwen 3 including the 30B-A3B and 235B-A22B MoEs, Mistral 7B v0.3, Mixtral
-8x7B, Gemma 2 (9B/27B), Gemma 3 (4B/12B/27B), Phi-4, DeepSeek-V2-Lite (MLA)
-and gpt-oss 20B/120B.
-
-Every device figure comes from a vendor datasheet and every model figure from
-that model's published `config.json`; both carry their source string in the
-JSON. The test suite re-derives each model's parameter count from its own
-architecture fields and requires the result within 0.5% of the published count
-— the worst of the 24 is Gemma 3 12B at 0.040%.
-
-The database is a convenience, not a limit. Anything matching `ModelSpec` /
-`DeviceSpec` works, from a file or from code:
-
-```sh
-vramfit check --model-json ./my-finetune.json --device-json ./my-gpu.json --ctx 4k
-```
-
-Better still, point it at the checkpoint and skip the database entirely:
+### 6.1 A GGUF file
 
 ```console
 $ vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
@@ -510,7 +362,15 @@ Memory
 
   ███████████▓▓▓▓▓▓▓▓▓▒▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  40% of 24.00 GiB
   █ weights 4.82   ▓ KV 4.00   ▒ overhead 0.85   ░ free 14.33   (GiB)
-...
+
+Capacity
+  Largest context that fits    128K  the architecture's own maximum
+  Best quant that fits at 32K   F16  14.96 GiB of weights, 39.2 tok/s
+
+Speed (estimates: decode +/-25%, prefill +/-40%)
+  Decode               66.0 tok/s  at 32K context, 1 sequence
+  Prefill              2450 tok/s  23.6 GFLOP per prompt token
+  Time to first token      13.4 s  for a prompt of 32K tokens
 ```
 
 Every number in that report is **measured, not looked up**. The parameter
@@ -529,6 +389,23 @@ arrays, GQA/MLA/sliding-window attention and MoE expert geometry. A
 big-endian file, a v1 file, a truncated one or an unknown ggml type each fail
 by name rather than producing a plausible wrong answer.
 
+A checkpoint that is not named `.gguf` — an Ollama blob, a file a downloader
+renamed — is read with `--gguf <path>`, which skips the extension check and
+changes nothing else:
+
+```console
+$ vramfit check --gguf ./blobs/sha256-6a0746a1ec1aa3d1d1a7b1c7b1ee1eae -d 4090 --ctx 8k
+Meta Llama 3.1 8B Instruct  |  Q4_K_M  |  NVIDIA RTX 4090
+=========================================================
+
+Read from ./blobs/sha256-6a0746a1ec1aa3d1d1a7b1c7b1ee1eae  (GGUF v3, 292 tensors, llama architecture, Q4_K_M)
+
+FITS  -  6.67 GiB of 24.00 GiB used, 17.33 GiB free (28% utilised)
+...
+```
+
+### 6.2 A HuggingFace checkpoint
+
 A HuggingFace checkpoint works the same way — point at the directory, or at
 its `config.json` with `--hf-config`:
 
@@ -544,13 +421,33 @@ FITS  -  20.80 GiB of 96.00 GiB used, 75.20 GiB free (22% utilised)
 Memory
   Weights          17.23 GiB  30.53B total / 3.04B active, 4.85 effective bits/weight
   KV cache          3.00 GiB  32K tokens, 48 layers x 4 KV heads x 128, f16
-...
+  Runtime context   0.50 GiB  metal driver and kernels
+  Compute buffer    72.6 MiB  activations, logits and graph scratch
+  Total            20.80 GiB  at Q4_K_M
+  Available        96.00 GiB  Apple M4 Max, 75% of 128 GiB wirable
+
+  ██████████▓▒░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  22% of 96.00 GiB
+  █ weights 17.23   ▓ KV 3.00   ▒ overhead 0.57   ░ free 75.20   (GiB)
+
+Capacity
+  Largest context that fits    40K  the architecture's own maximum
+  Best quant that fits at 32K  F16  56.87 GiB of weights, 41.1 tok/s
+
+Speed (estimates: decode +/-25%, prefill +/-40%)
+  Decode               48.2 tok/s  at 32K context, 1 sequence
+  Prefill               582 tok/s  19.0 GFLOP per prompt token
+  Time to first token      56.3 s  for a prompt of 32K tokens
+
+Notes
+  - Apple M4 Max shares memory with the OS: only 75% is wirable for the GPU by
+    default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N" and pass the
+    result as --vram.
 ```
 
-Nothing is downloaded and no `transformers` import happens: the config is read
-from the path you give, and the parameter count comes from the safetensors
-index beside it (`metadata.total_size` divided by the checkpoint's dtype) or,
-for a single-file repository, exactly from its header's tensor shapes.
+The config is read from the path you give and nothing else is opened. The
+parameter count comes from the safetensors index beside it
+(`metadata.total_size` divided by the checkpoint's dtype) or, for a
+single-file repository, exactly from its header's tensor shapes.
 
 What makes this more than a field rename is that the fields that matter most
 are the ones the ecosystem is least consistent about, and each way of getting
@@ -570,26 +467,15 @@ parameters than the decoder in the config accounts for — a vision tower, an
 extra head — the decoder's own count is used and the difference is printed
 under *Notes*, rather than charged to a model that does not exist.
 
-User-supplied specs go through the same validator as the bundled data, which
-enforces the invariants that keep the arithmetic honest — the declared
-parameter count has to match the count the shape fields imply, query heads must
-divide evenly into KV head groups, an MLA model must carry MLA geometry, a
-router cannot pick more experts than exist — and names the exact field path
-when they do not.
-
-A model released in a quantization of its own says so with `nativeQuant`, as
-the two gpt-oss entries do. That format is then the default for `check` and the
-top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
-an MXFP4 checkpoint is twice the bytes for weights that were never wider than
-4.25 bits.
-
-### 6.7 Beyond one model on one device
+## 7. Beyond one model on one device
 
 Three commands for the questions that need more than one `check`.
 
-**`compare`** — one model, every device you might use, ranked. What fits comes
-before what does not, then fastest first, because once a configuration fits,
-decode speed is what you actually feel. `4090x2` means two of them.
+### 7.1 compare — one model, several devices
+
+One model, every device you might use, ranked. What fits comes before what
+does not, then fastest first, because once a configuration fits, decode speed
+is what you actually feel. `4090x2` means two of them.
 
 ```console
 $ vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra,3090x2 --ctx 8k
@@ -616,8 +502,15 @@ decodes 2.5x faster, because a layer split does not raise decode speed. The
 M3 Ultra has 340 GiB spare and is the slowest thing in the table that fits.
 Neither of those is obvious from a spec sheet.
 
-**`recommend`** — the inverse question, and the one people actually arrive
-with. Ranked by
+A path works here too, and is read once for the whole table:
+
+```sh
+vramfit compare ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf --devices 4090,3060 --ctx 8k
+```
+
+### 7.2 recommend — one device, every model
+
+The inverse question, and the one people actually arrive with. Ranked by
 
 ```
 score = capability x quality x speed
@@ -648,7 +541,12 @@ NVIDIA RTX 4090  |  chat  |  8K context
 3.  Gemma 2 27B  27.23B  Q6_K    23.94 GiB       8K  25.4 tok/s
     27.23B parameters at Q6_K, which is effectively lossless, and 25.4 tok/s,
     comfortably above the 15 tok/s chat wants.
-...
+
+Ranked by parameter count on a log scale, times a quantization-quality factor,
+times decode speed against 15 tok/s -- reading speed is 10-15 tokens a second,
+so anything above that is buffered by your eyes rather than enjoyed. vramfit
+has no benchmark data and does not rank models by how good they are at
+anything.
 ```
 
 `--use-case` sets two numbers and nothing else: the context to check at and
@@ -659,7 +557,9 @@ because summarising is dominated by prefill. **vramfit has no benchmark data
 and does not rank models by how good they are at anything** — the report says
 so, on the page, every time.
 
-**`fleet`** — heterogeneous machines against a list of models, from a file:
+### 7.3 fleet — several machines, several models
+
+Heterogeneous machines against a list of models, from a file:
 
 ```json
 {
@@ -713,7 +613,7 @@ entry is a name or a path, so a fleet file can mix the bundled database with
 the checkpoints actually sitting on those machines. `fleet` exits **1** when
 any model fits nowhere, which is what makes it useful in CI.
 
-### 6.8 The flags to actually type
+## 8. The flags to actually type
 
 Everything else here answers *will it fit*. `--launcher` answers *then what do
 I run*, which is the step where the arithmetic usually gets thrown away and
@@ -744,9 +644,14 @@ Launch
   - --gpu-memory-utilization is capped at 0.95: this deployment wants 181% of
     the card, and above 95% there is no room left for CUDA graph capture and
     allocator fragmentation.
+  - vLLM's GGUF loader is experimental and single-file only; the usual path is
+    to serve the safetensors checkpoint and let --quantization pick the
+    kernel.
 ```
 
-The three runtimes spell the same three decisions differently, and each
+### 8.1 The three runtimes
+
+The three of them spell the same three decisions differently, and each
 translation has a trap in it:
 
 - **`-ngl`** is `n_layer + 1` when the model is resident — llama.cpp counts one
@@ -767,24 +672,57 @@ translation has a trap in it:
 The paths are kept apart on purpose: `-m` opens a GGUF and nothing else, vLLM
 wants a repository or a directory of safetensors, and Ollama's `FROM` takes
 either. Where there is nothing of the right kind to give — a model looked up
-in the bundled database — a placeholder is printed rather than a path that
-would look right and fail.
+in the bundled database, as above — a placeholder is printed rather than a
+path that would look right and fail. Check the file instead and the flags come
+out ready to run:
 
-`--ngl` on its own prints the number and nothing else, which is the form a
-script wants:
+```console
+$ vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 8k --launcher
+...
+Launch
+  llama.cpp
+    llama-server -m ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 33 -c 8192 -fa on
+
+  Ollama  (Modelfile)
+    FROM ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
+    PARAMETER num_gpu 33
+    PARAMETER num_ctx 8192
+    OLLAMA_FLASH_ATTENTION=1
+
+  vLLM
+    vllm serve ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf --max-model-len 8192 --gpu-memory-utilization 0.28 --quantization gguf
+
+  - vLLM's GGUF loader is experimental and single-file only; the usual path is
+    to serve the safetensors checkpoint and let --quantization pick the
+    kernel.
+```
+
+That `-ngl 33` is the model's 32 blocks plus the one llama.cpp counts for the
+output tensors, and the vLLM fraction is this deployment's 6.67 GiB over the
+card's installed 24 GiB.
+
+### 8.2 The layer count on its own
+
+`--ngl` prints the number and nothing else, which is the form a script wants:
 
 ```sh
 llama-server -m ./model.gguf -c 8192 \
   -ngl "$(vramfit check ./model.gguf -d 4090 --ctx 8k --ngl)"
 ```
 
-### 6.9 Presentation
+The exit code still reports the fit — **0** resident, **1** offloaded — so
+under `set -e` a model that no longer fits stops the script instead of quietly
+starting a server that decodes at 2 tok/s.
+
+## 9. Presentation
 
 Three things that exist so the output can be read, argued with and passed on.
 
-**The memory bar.** The table has the numbers; the bar has the proportions,
-which is the part people actually reason with — "the cache is half of it" is a
-decision, and "4.00 GiB" is a figure you then have to divide. Every segment
+### 9.1 The memory bar
+
+The table has the numbers; the bar has the proportions, which is the part
+people actually reason with — "the cache is half of it" is a decision, and
+"4.00 GiB" is a figure you then have to divide. Every segment
 carries its own block character as well as its own colour, so it survives
 being pasted into an issue, piped into a file, or read with colour off:
 
@@ -803,7 +741,9 @@ Colour is off unless the output is going to a terminal that wants it:
 then `TERM=dumb`, then whether stdout is a TTY. `vramfit check > report.txt`
 produces a file with no escape sequences in it.
 
-**`--explain`.** The formulas from section 4, with this model's own numbers
+### 9.2 The formulas, with the numbers in them
+
+`--explain` prints the formulas from section 4 with this model's own numbers
 substituted, so the maths can be checked rather than taken:
 
 ```console
@@ -820,12 +760,27 @@ Explain  (Llama 3.1 8B at Q4_K_M, 32K context, f16 cache)
     all layers  2 x 32 x 8 x 128 x 32768 x 1 x 2  = 4.000 GiB
     Grouped-query attention: 8 KV heads, not the 32 query heads. Using the
     query count here is the 4x mistake this tool exists to avoid.
-...
+
+  Overheads (empirical: +/-0.3 GiB on the first, +/-50% on the second)
+    runtime context  0.70 GiB x 1 device                                              = 0.700 GiB
+    compute buffer   max(64 MiB, 512 x (4096 x 18 + 14336 x 6) x 2 + 1 x 128256 x 4)  = 0.153 GiB
+
+  Total
+    footprint  4.621 GiB + 4.000 GiB + 0.700 GiB + 0.153 GiB  = 9.474 GiB
+    capacity   24.00 GiB x 1.00 usable x 1 device             = 24.000 GiB
+    verdict    9.474 GiB <= 24.000 GiB                        = FITS
+
   Decode = bandwidth x efficiency / bytes read per token  (estimate, +/-25%)
     efficiency      0.75 at 16 bits, less the dequantization penalty at 0.92 of full  = 0.598
     bandwidth       1008 GB/s x 0.598                                                 = 603 GB/s
     read per token  4.64 GB active weights + 4.29 GB cache                            = 8.94 GB
     decode          603 GB/s / 8.94 GB                                                = 67.4 tok/s
+
+  Prefill = device FLOP/s x MFU / FLOPs per prompt token  (estimate, +/-40%)
+    FLOPs/token  2 x 7,504,658,432 active + 8.59 GFLOP of attention  = 23.60 GFLOP
+    compute      165.2 TFLOP/s x 0.35 MFU (cuda-consumer)            = 57.8 TFLOP/s
+    prefill      57.8e12 / 23.60e9                                   = 2450 tok/s
+    first token  32,768 prompt tokens / 2450 tok/s                   = 13.4 s
 ```
 
 Nothing is recomputed for this: the values printed are the ones the report
@@ -834,8 +789,11 @@ section switches formula with the architecture, so a DeepSeek model shows
 `27 x (512 + 64) x ctx` and a Gemma 3 shows its global and windowed layers
 apart.
 
-**`--markdown`.** The same reports through pipes instead of spaces, for
-pasting into an issue or a README:
+### 9.3 Markdown
+
+`--markdown` renders the same reports through pipes instead of spaces, for
+pasting into an issue or a README. The head of
+`check llama-3.1-8b -d 4090 --ctx 8k --markdown`, as it arrives on stdout:
 
 ```markdown
 ### Llama 3.1 8B — Q4_K_M — NVIDIA RTX 4090
@@ -860,7 +818,197 @@ readable. `recommend --markdown` gains a trade-off column, which a terminal
 has no room for. `--json` and `--markdown` together are refused rather than
 one quietly winning.
 
-## 7. Accuracy and limitations
+## 10. Reference
+
+The whole surface in one place. Sections 6 to 9 are where each part of it is
+worked through.
+
+### 10.1 Commands
+
+| Command | Purpose | Exit |
+| --- | --- | --- |
+| `vramfit check <model> --device <d>` | Full report for one model, quant, context and device | 0 fits / 1 does not / 2 usage |
+| `vramfit best <model> --device <d>` | Every quantization ranked by quality, with max context and decode speed | 0 something fits / 1 nothing in the range fits at this context / 2 usage |
+| `vramfit compare <model> --devices <list>` | One model on several devices, best first | 0 something fits / 1 nothing does / 2 usage |
+| `vramfit recommend --device <d>` | Every bundled model that fits, ranked, each with its trade-off | 0 something fits / 1 nothing does / 2 usage |
+| `vramfit fleet --config <file>` | Which of several machines can serve which of several models | 0 every model placed / 1 one fits nowhere / 2 usage |
+| `vramfit devices` | List the 29 bundled devices | 0 / 2 |
+| `vramfit models` | List the 24 bundled models | 0 / 2 |
+
+### 10.2 Options
+
+`<model>` is a bundled id, name or alias — or a path: a GGUF file, or a
+HuggingFace checkpoint directory. Both are read from their own headers.
+
+| Option | Meaning |
+| --- | --- |
+| `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
+| `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
+| `--hf-config <path>` | Read the model from a HuggingFace checkpoint directory or its `config.json`; a safetensors index beside it gives the true parameter count |
+| `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max` |
+| `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
+| `--limit <n>` | `recommend` only: show the top n |
+| `--config <path>` | `fleet` only: the JSON description of the machines and the models |
+| `--launcher [runtime]` | `check` only: print the exact flags this fit implies -- `llama.cpp`, `ollama`, `vllm`, or all three |
+| `--ngl` | `check` only: print the llama.cpp `-ngl` value and nothing else, for a shell substitution |
+| `--explain` | `check` only: show every headline number with the arithmetic that produced it |
+| `--markdown` | Markdown tables on any command, for pasting into an issue. Mutually exclusive with `--json` |
+| `--color` / `--no-color` | Force ANSI colour on or off; the default follows the terminal, and `NO_COLOR`, `FORCE_COLOR` and `TERM=dumb` are honoured |
+| `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
+| `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
+| `-b, --batch <n>` | Concurrent sequences, default 1 |
+| `-g, --gpus <n>` | Identical devices sharing the model, default 1 |
+| `--kv-quant <id>` | `f16`, `q8_0`, `q5_1`, `q5_0`, `q4_1`, `q4_0` |
+| `--vram <GiB>` | Usable memory per device, used as given -- not scaled again by the device's usable fraction |
+| `--ubatch <n>` | Physical batch (llama.cpp `--ubatch-size`), default 512 |
+| `--no-flash-attn` | Model the compute buffer without flash attention |
+| `--prompt <n>` | Prompt length for time-to-first-token |
+| `--ram <GiB>` | System RAM available for offloaded layers |
+| `--ram-bandwidth <GB/s>` | System RAM bandwidth, default 89.6 (DDR5-5600) |
+| `--cpu-tflops <n>` | CPU dense FP16 throughput, for offloaded prefill |
+| `--efficiency <0-1>` | Override the device's memory-bandwidth efficiency; offloaded layers keep their derived figure |
+| `--prefill-efficiency <0-1>` | Override the device's prefill MFU, on the same terms |
+| `--model-json <path>` | Use a model spec from a file instead of the database |
+| `--device-json <path>` | Use a device spec from a file instead of the database |
+| `--json` | Machine-readable output |
+| `-h, --help` / `-v, --version` | Usage text / version |
+
+### 10.3 Quantizations
+
+Effective bits per weight, before the embedding and output-head promotions:
+
+| Quant | bpw | Quant | bpw | Quant | bpw |
+| --- | ---: | --- | ---: | --- | ---: |
+| `f16` / `bf16` | 16.00 | `q4_k_m` | 4.83 | `mxfp4` | 4.25 |
+| `q8_0` | 8.50 | `q4_k_s` | 4.57 | `awq-4bit` | 4.25 |
+| `q6_k` | 6.56 | `q4_0` | 4.55 | `gptq-4bit` | 4.25 |
+| `q5_k_m` | 5.67 | `q3_k_m` | 3.91 | | |
+| `q5_k_s` | 5.52 | `q2_k` | 3.35 | | |
+
+### 10.4 JSON output
+
+`--json` writes one object to stdout and nothing else, so it pipes straight
+into `jq`. Every computed quantity is in base units: bytes for memory, decimal
+bytes per second for bandwidth, tokens per second for rates, seconds for
+durations, tokens for context and prompt lengths — GiB appear only in the human
+report. The `device` block is the stored spec, where the field name carries the
+unit (`vramGiB`, `bandwidthGBs`). Keys are added over time, but the ones below
+keep their name and meaning.
+
+`vramfit check --json`:
+
+| Key | Contents |
+| --- | --- |
+| `vramfit` | Version that produced the payload |
+| `fits` | The verdict, matching the exit code |
+| `model` | `id`, `name`, `origin` (`database`, `gguf`, `huggingface` or `json`), `from` (the path or id it was read from), `totalParams`, `activeParams`, `nLayers`, `nKvHeads`, `headDim`, `attention`, `moe` |
+| `device` | `id`, `name`, `family`, `vramGiB`, `bandwidthGBs`, `usableFraction`, `count` |
+| `config` | `quant`, `bitsPerWeight`, `effectiveBitsPerWeight`, `ctx`, `batch`, `kvQuant` |
+| `memory` | `weightsBytes`, `kvCacheBytes`, `runtimeContextBytes`, `activationBytes` — which sum to `totalBytes` — plus `capacityBytes`, `headroomBytes`, `utilization` |
+| `capacity` | `maxContext`, `recommendedQuant` (id or `null`) |
+| `throughput` | `decodeTokensPerSecond`, `aggregateDecodeTokensPerSecond`, `prefillTokensPerSecond`, `promptTokens`, `timeToFirstTokenSeconds`, `decodeErrorBand`, `prefillErrorBand` |
+| `offload` | `null` when the model is fully resident, otherwise `gpuLayers`, `cpuLayers`, `vocabOnDevice`, `systemRamRequiredBytes`, `systemRamAvailableBytes`, `feasible`, `blendedBandwidthBytesPerSecond` |
+| `warnings` | The strings the report prints under *Notes* |
+
+`--launcher` adds a `launcher` key to `check --json` — `llamaCpp`, `ollama`
+and `vllm`, each with its own fields plus an `args` array and a `command`
+string, and the `notes` the report prints beside them. The key is absent
+without the flag.
+
+`vramfit compare --json` returns `vramfit`, `model`, `config`, `best` (a
+device id or `null`) and `devices[]` in the table's own order, each with
+`capacityBytes`, `totalBytes`, `headroomBytes`, `utilization`, `fits`,
+`maxContext`, `decodeTokensPerSecond`, `offloadFeasible` and `best`.
+`recommend --json` returns `device`, `useCase` (`id`, `ctx`,
+`comfortableDecodeTokensPerSecond`) and `models[]` with the three ranking
+factors — `capability`, `quality`, `speed` — beside the `score` they multiply
+to, so the ranking can be recomputed or argued with. `fleet --json` returns
+`machines[]` and `models[]`, each model carrying `servedBy` and one entry per
+machine.
+
+`vramfit best --json` returns `vramfit`, `model`, `device`, `ctx`,
+`recommended` (a quant id or `null`) and `quants[]`, one entry per candidate
+with `id`, `label`, `bitsPerWeight`, `qualityRank`, `weightsBytes`,
+`totalBytes`, `fits`, `maxContext`, `decodeTokensPerSecond`, `offloadFeasible`
+and `systemRamRequiredBytes`. `devices --json` and `models --json` print the
+bundled `DeviceSpec[]` and `ModelSpec[]` as they are.
+
+```sh
+vramfit check llama-3.1-8b -d 4090 --ctx 32k --json \
+  | jq '.memory.totalBytes / 1073741824, .throughput.decodeTokensPerSecond'
+```
+
+### 10.5 Library
+
+```ts
+import { checkFit, getDevice, getModel, getQuant, recommendQuant } from "vramfit";
+
+const fit = checkFit(getModel("llama-3.1-8b"), getQuant("q4_k_m"), getDevice("4090"), {
+  ctx: 32_768,
+});
+
+fit.fits;                               // true
+fit.headroomBytes;                      // 15597252060.16
+fit.utilization;                        // 0.3947469606002172
+fit.maxContext;                         // 131072
+fit.footprint.kv.totalBytes;            // 4294967296
+fit.throughput.decode.tokensPerSecond;  // 67.4244625650359
+fit.offload;                            // null -- it is fully resident
+fit.warnings;                           // []
+
+recommendQuant(getModel("qwen2.5-32b"), getDevice("4090"), { ctx: 8192 })?.quant.label;
+// "Q4_K_M"
+```
+
+Every layer is exported and usable on its own — `computeWeightBytes`,
+`computeKvCacheBytes`, `computeActivationBytes`, `computeFootprint`,
+`estimateThroughput`, `planOffload`, `blendBandwidth`, `maxContextFor`,
+`evaluateQuants`, `deriveArchitecture` — along with the quantization tables,
+the device and model registries, and the validators that parse user-supplied
+specs. The arithmetic is pure: plain data in, plain data out, no global state.
+The only I/O in the package is a lazy, memoised read of the bundled JSON, and
+it only happens if you ask for a bundled model or device by name.
+
+### 10.6 Bundled data, and bringing your own
+
+`vramfit devices` lists 29 devices: NVIDIA RTX 3060 12GB through 5090, A100
+40/80GB, H100 80GB SXM5, L40S, AMD RX 7900 XTX, Apple M1–M4 in Pro/Max/Ultra
+variants with their unified-memory bandwidth and the macOS wired-memory limit,
+and generic CPU tiers from dual-channel DDR4-3200 to 8-channel DDR5-4800.
+
+`vramfit models` lists 24 models: Llama 3.1/3.2/3.3 (1B–70B), Qwen 2.5 (7B–72B),
+Qwen 3 including the 30B-A3B and 235B-A22B MoEs, Mistral 7B v0.3, Mixtral
+8x7B, Gemma 2 (9B/27B), Gemma 3 (4B/12B/27B), Phi-4, DeepSeek-V2-Lite (MLA)
+and gpt-oss 20B/120B.
+
+Every device figure comes from a vendor datasheet and every model figure from
+that model's published `config.json`; both carry their source string in the
+JSON. The test suite re-derives each model's parameter count from its own
+architecture fields and requires the result within 0.5% of the published count
+— the worst of the 24 is Gemma 3 12B at 0.040%.
+
+The database is a convenience, not a limit. A checkpoint on disk is read
+directly (section 6), and anything matching `ModelSpec` / `DeviceSpec` works,
+from a file or from code:
+
+```sh
+vramfit check --model-json ./my-finetune.json --device-json ./my-gpu.json --ctx 4k
+```
+
+User-supplied specs go through the same validator as the bundled data, which
+enforces the invariants that keep the arithmetic honest — the declared
+parameter count has to match the count the shape fields imply, query heads must
+divide evenly into KV head groups, an MLA model must carry MLA geometry, a
+router cannot pick more experts than exist — and names the exact field path
+when they do not.
+
+A model released in a quantization of its own says so with `nativeQuant`, as
+the two gpt-oss entries do. That format is then the default for `check` and the
+top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
+an MXFP4 checkpoint is twice the bytes for weights that were never wider than
+4.25 bits.
+
+## 11. Accuracy and limitations
 
 - Memory figures are **arithmetic**, and only as good as their inputs. Weight
   sizes land within 2% of published GGUF files for every dense model in the
@@ -887,7 +1035,7 @@ one quietly winning.
   0.003% on Llama 3.1 8B — so the weight files are preferred when they are
   there to read.
 
-## 8. Development
+## 12. Development
 
 ```sh
 npm install
@@ -915,7 +1063,7 @@ pull request is expected to carry, [SECURITY.md](SECURITY.md) for private
 vulnerability reports, and [CHANGELOG.md](CHANGELOG.md) for the release record.
 Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## 9. License
+## 13. License
 
 vramfit is **open source**, licensed under the
 [Apache License, Version 2.0](LICENSE).

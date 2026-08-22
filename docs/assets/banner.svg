@@ -31,5 +31,5 @@
   </g>
   <text x="640" y="92" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="54" font-weight="700" fill="#e6edf7" letter-spacing="1">vram<tspan fill="url(#accent)">fit</tspan></text>
   <text x="640" y="128" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="17" fill="#8b98ad" letter-spacing="2">WILL THIS MODEL FIT · HOW FAST · LOCAL LLM CAPACITY PLANNING</text>
-  <text x="640" y="290" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#5b6b82">GQA / MLA KV cache · GGUF effective bits-per-weight · MoE active params · bandwidth-bound decode · llama.cpp layer offload</text>
+  <text x="640" y="290" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#5b6b82">GGUF / safetensors headers · GQA / MLA KV cache · MoE active params · bandwidth-bound decode · layer offload · launch flags</text>
 </svg>

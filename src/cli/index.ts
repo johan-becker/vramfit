@@ -151,6 +151,9 @@ COMMANDS
   devices   List the bundled devices.
   models    List the bundled models.
 
+  Every command takes --json and --markdown. --explain, --launcher and --ngl
+  are about one fit, so they belong to "check" alone.
+
 MODEL AND DEVICE
   <model>                  Bundled id, name or alias, e.g. llama-3.1-8b,
                            "Llama 3.1 8B", llama3.1:8b -- see "vramfit models"
@@ -163,9 +166,10 @@ MODEL AND DEVICE
                            an optional count: 4090,3090x2,m4-max.
       --gguf <path>        Read the model from a GGUF file whatever it is
                            named. Only the header is read, never the weights.
-      --hf-config <path>   Read the model from a HuggingFace config.json.
-                           A safetensors index beside it, if there is one,
-                           gives the true parameter count.
+      --hf-config <path>   Read the model from a HuggingFace checkpoint
+                           directory or from its config.json. A safetensors
+                           index beside it, if there is one, gives the true
+                           parameter count.
       --model-json <path>  Use a model spec from a JSON file instead.
       --device-json <path> Use a device spec from a JSON file instead.
 
@@ -205,21 +209,27 @@ RECOMMEND
                            chat: 8K and 15 tok/s).
       --limit <n>          Show only the top n models.
 
-LAUNCHER
+LAUNCHER (check only)
       --launcher [runtime] Print the exact flags this fit implies, for
                            llama.cpp, ollama, vllm, or all three (default).
+                           -ngl and num_gpu come from the offload plan;
+                           vLLM's --gpu-memory-utilization from the footprint
+                           over the card's installed memory.
       --ngl                Print only the llama.cpp -ngl value and exit, for
-                           use in a shell substitution.
+                           use in a shell substitution. The exit code still
+                           reports the fit, so "set -e" stops on an offload.
 
 OUTPUT
-      --json               Machine-readable output.
+      --json               Machine-readable output. Every command has one.
       --markdown           Markdown tables, for pasting into an issue or a
                            README. Mutually exclusive with --json.
-      --explain            Show every headline number with the arithmetic
-                           that produced it, so the maths can be checked.
-      --color/--no-color   Force ANSI colour on or off. The default is on for
-                           a terminal and off for a pipe, and NO_COLOR is
-                           honoured.
+      --explain            check only: every headline number with the
+                           arithmetic that produced it, so the maths can be
+                           checked rather than taken.
+      --color/--no-color   Force ANSI colour on or off. These win outright,
+                           then NO_COLOR, then FORCE_COLOR, then TERM=dumb,
+                           then whether stdout is a terminal -- so a pipe
+                           gets no escape sequences by default.
   -h, --help               This text.
   -v, --version            Print the version.
 
@@ -234,9 +244,15 @@ EXAMPLES
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
   vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
+  vramfit check llama-3.1-8b -d 4090 --ctx 32k --explain
+  vramfit best qwen2.5-32b -d 4090 --ctx 8k --markdown
+  ngl=$(vramfit check ./model.gguf -d 4090 --ctx 8k --ngl)
 
 EXIT CODES
-  0  fits    1  does not fit    2  bad usage`;
+  0  fits    1  does not fit    2  bad usage
+  "Does not fit" is per command: no quantization in range for "best", no
+  device for "compare", no model for "recommend", and a model no machine can
+  serve for "fleet" -- which is what makes that one useful in CI.`;
 
 const SHARED_FLAGS = [
   "device",
