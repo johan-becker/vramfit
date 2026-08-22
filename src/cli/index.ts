@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { getDevice, getModel, listDevices, listModels, parseDeviceSpec, parseModelSpec } from "../db/index.js";
+import { compareDevices, parseDeviceList, type DeviceCandidate } from "../compare.js";
 import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
 import { openByteSource } from "../gguf/index.js";
 import { getQuant } from "../quant.js";
@@ -19,8 +20,10 @@ import {
 import {
   bestJson,
   checkJson,
+  compareJson,
   renderBest,
   renderCheck,
+  renderCompare,
   renderDevices,
   renderModels,
 } from "./report.js";
@@ -89,6 +92,7 @@ const HELP = `vramfit -- will this model run on my machine, and how fast?
 USAGE
   vramfit check <model> --device <device> [options]
   vramfit best  <model> --device <device> [options]
+  vramfit compare <model> --devices <list> [options]
   vramfit devices [--json]
   vramfit models  [--json]
 
@@ -97,6 +101,8 @@ COMMANDS
             Exits 1 when it does not fit, so it can gate a deploy script.
   best      Every quantization ranked by quality, with the largest context
             and the decode speed each one leaves room for.
+  compare   One model across several devices: fits, headroom, largest
+            context and decode speed, best first.
   devices   List the bundled devices.
   models    List the bundled models.
 
@@ -108,6 +114,8 @@ MODEL AND DEVICE
                            checkpoint directory (./Llama-3.1-8B/).
   -d, --device <id>        Bundled device id, name or alias, e.g. 4090,
                            "RTX 4090", m3-max. See "vramfit devices".
+      --devices <list>     Comma-separated devices for "compare", each with
+                           an optional count: 4090,3090x2,m4-max.
       --gguf <path>        Read the model from a GGUF file whatever it is
                            named. Only the header is read, never the weights.
       --hf-config <path>   Read the model from a HuggingFace config.json.
@@ -150,6 +158,7 @@ EXAMPLES
   vramfit check llama-3.1-8b --device 4090 --ctx 32k
   vramfit check llama-3.3-70b -d 3090 -g 2 -q q4_k_m --ctx 8k
   vramfit best qwen2.5-32b --device m3-max
+  vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
   vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
@@ -341,6 +350,41 @@ function runCheck(args: Args, io: Io, version: string): number {
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
+/** Resolve the `--devices 4090,3090x2,m4-max` list `compare` works from. */
+function resolveDeviceList(args: Args): DeviceCandidate[] {
+  const raw = args.string("devices");
+  if (raw === undefined) {
+    throw new UsageError(
+      '--devices is required, as a comma-separated list: --devices 4090,3090x2,m4-max. Try "vramfit devices" for the bundled list.',
+    );
+  }
+  return parseDeviceList(raw).map((entry) => ({
+    device: getDevice(entry.query),
+    gpus: entry.gpus,
+  }));
+}
+
+function runCompare(args: Args, io: Io, version: string): number {
+  args.assertKnown([...SHARED_FLAGS, "quant", "devices"]);
+  assertNoExtraArguments(args, "compare", 2);
+
+  const source = resolveModelSource(args, io);
+  const model = source.model;
+  const quant = resolveQuant(args, source);
+  const candidates = resolveDeviceList(args);
+  const options = fitOptions(args);
+  const ctx = options.ctx ?? model.defaultCtx;
+
+  const rows = compareDevices(model, quant, candidates, options);
+
+  if (args.boolean("json") === true) {
+    emitJson(io, compareJson(model, quant, rows, ctx, version));
+  } else {
+    emit(io, renderCompare(model, quant, rows, ctx, { source }));
+  }
+  return rows.some((row) => row.fit.fits) ? EXIT_OK : EXIT_DOES_NOT_FIT;
+}
+
 function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
   assertNoExtraArguments(args, "best", 2);
@@ -405,6 +449,8 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return runCheck(args, io, version);
       case "best":
         return runBest(args, io, version);
+      case "compare":
+        return runCompare(args, io, version);
       case "devices":
         return runList(args, io, "devices");
       case "models":
@@ -414,7 +460,7 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return EXIT_OK;
       default:
         throw new UsageError(
-          `Unknown command "${command}". Expected check, best, devices, models or help.`,
+          `Unknown command "${command}". Expected check, best, compare, devices, models or help.`,
         );
     }
   } catch (error) {
