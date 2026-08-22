@@ -113,6 +113,33 @@ describe("vramfit check", () => {
     expect(io.output).toMatch(/Largest context that fits\s+128K/);
   });
 
+  it("annotates time to first token with the prompt it was computed from", () => {
+    // The figure comes from --prompt when given, so the note beside it has to
+    // say so: labelling a 128-token prefill "for a prompt of 32K tokens" is
+    // wrong by a factor of 256 against the number it explains.
+    const long = invoke(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "32k"]).io.output;
+    expect(long).toMatch(/Time to first token\s+13\.\d s\s+for a prompt of 32K tokens/);
+
+    const short = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "4090",
+      "--ctx",
+      "32k",
+      "--prompt",
+      "128",
+    ]).io.output;
+    expect(short).toMatch(/Time to first token\s+\d+ ms\s+for a prompt of 128 tokens/);
+
+    const payload = JSON.parse(
+      invoke(["check", "llama-3.1-8b", "-d", "4090", "--ctx", "32k", "--prompt", "128", "--json"])
+        .io.output,
+    ) as { throughput: { promptTokens: number; timeToFirstTokenSeconds: number } };
+    expect(payload.throughput.promptTokens).toBe(128);
+    expect(payload.throughput.timeToFirstTokenSeconds).toBeLessThan(1);
+  });
+
   it("describes latent attention and sliding windows in the cache line", () => {
     expect(invoke(["check", "deepseek-v2-lite", "-d", "4090"]).io.output).toMatch(
       /27 layers x 576-wide latent \(MLA\)/,
