@@ -7,6 +7,7 @@ import {
   gpuLayersFor,
   gpuMemoryUtilizationFor,
   launcherPlan,
+  notesFor,
 } from "../src/launcher.js";
 import { getQuant } from "../src/quant.js";
 import { FakeIo } from "./fake-io.js";
@@ -103,9 +104,80 @@ describe("launcherPlan", () => {
     const plan = launcherPlan(fitOf(LLAMA_3_1_8B, "4090", { physicalBatch: 128, batch: 4 }));
     expect(plan.llamaCpp.command).toMatch(/-ub 128/);
     expect(plan.llamaCpp.command).toMatch(/--parallel 4/);
-    expect(plan.ollama.modelfile).toContain("PARAMETER num_parallel 4");
+    // num_parallel is not a Modelfile parameter -- Ollama takes concurrency
+    // from OLLAMA_NUM_PARALLEL, and `ollama create` rejects the file with it.
+    expect(plan.ollama.modelfile).not.toContain("PARAMETER num_parallel 4");
+    expect(plan.ollama.environment).toContain("OLLAMA_NUM_PARALLEL=4");
     expect(plan.ollama.modelfile).toContain("PARAMETER num_batch 128");
     expect(plan.vllm.command).toMatch(/--max-num-seqs 4/);
+  });
+
+  it("keeps the Modelfile to Modelfile commands", () => {
+    // The block is meant to be pasted. An environment assignment in it is not
+    // a Modelfile command, and `ollama create` refuses the whole file for one.
+    const plan = launcherPlan(fitOf(LLAMA_3_1_8B, "4090", { kvQuant: "q8_0", batch: 2 }), {
+      modelName: "llama-3.1-8b",
+    });
+    for (const line of plan.ollama.modelfile) {
+      expect(line).toMatch(/^(FROM|PARAMETER) /);
+    }
+    expect(plan.ollama.environment).toEqual([
+      "OLLAMA_FLASH_ATTENTION=1",
+      "OLLAMA_NUM_PARALLEL=2",
+      "OLLAMA_KV_CACHE_TYPE=q8_0",
+    ]);
+  });
+
+  it("prints no OLLAMA_KV_CACHE_TYPE that Ollama would reject", () => {
+    // llama.cpp takes q5_1, q5_0 and q4_1; Ollama's cache-type setting takes
+    // f16, q8_0 and q4_0 and nothing else.
+    for (const kvQuant of ["q5_1", "q5_0", "q4_1"]) {
+      const plan = launcherPlan(fitOf(LLAMA_3_1_8B, "4090", { kvQuant }));
+      expect(plan.llamaCpp.command, kvQuant).toMatch(new RegExp(`--cache-type-k ${kvQuant}`));
+      expect(plan.ollama.environment.join(" "), kvQuant).not.toMatch(/OLLAMA_KV_CACHE_TYPE/);
+      expect(notesFor(plan, "ollama").join(" "), kvQuant).toMatch(
+        /OLLAMA_KV_CACHE_TYPE takes f16, q8_0 and q4_0 only/,
+      );
+    }
+    for (const kvQuant of ["q8_0", "q4_0"]) {
+      const plan = launcherPlan(fitOf(LLAMA_3_1_8B, "4090", { kvQuant }));
+      expect(plan.ollama.environment, kvQuant).toContain(`OLLAMA_KV_CACHE_TYPE=${kvQuant}`);
+      expect(notesFor(plan, "ollama").join(" "), kvQuant).not.toMatch(/no Ollama spelling/);
+    }
+  });
+
+  it("only tells vLLM --quantization gguf when vLLM is serving the GGUF", () => {
+    const gguf = launcherPlan(fitOf(), { ggufPath: "./m.gguf" });
+    expect(gguf.vllm.quantization).toBe("gguf");
+    expect(gguf.vllm.command).toMatch(/--quantization gguf/);
+
+    // The same k-quant mix served out of a safetensors directory, or out of a
+    // repository id: vLLM cannot load it, and a flag that looks right and
+    // fails at load is the outcome the placeholder rules exist to avoid.
+    for (const options of [{ checkpointPath: "./Qwen3-30B-A3B" }, { modelName: "llama-3.1-8b" }]) {
+      const plan = launcherPlan(fitOf(), options);
+      expect(plan.vllm.quantization).toBeNull();
+      expect(plan.vllm.command).not.toMatch(/--quantization/);
+      expect(notesFor(plan, "vllm").join(" ")).toMatch(/vLLM cannot load a llama\.cpp Q4_K_M mix/);
+      expect(notesFor(plan, "vllm").join(" ")).not.toMatch(/GGUF loader is experimental/);
+    }
+  });
+
+  it("tells each runtime only what is about it", () => {
+    const plan = launcherPlan(fitOf(LLAMA_3_1_70B, "4090", { ctx: 8192, systemRamGiB: 64 }), {
+      modelName: "llama-3.3-70b",
+    });
+    // Every note is still in the plan, and in the JSON payload built from it.
+    expect(plan.notes).toEqual(plan.runtimeNotes.map((note) => note.text));
+    expect(notesFor(plan, "all")).toEqual(plan.notes);
+
+    // -ngl is a llama.cpp flag; the Ollama block spells it num_gpu, and none
+    // of vLLM's three notes is about the runtime the reader asked for.
+    expect(notesFor(plan, "ollama").join(" ")).toMatch(/num_gpu to Ollama/);
+    expect(notesFor(plan, "ollama").join(" ")).not.toMatch(/vLLM/);
+    expect(notesFor(plan, "vllm").join(" ")).toMatch(/vLLM does not offload to system RAM/);
+    expect(notesFor(plan, "vllm").join(" ")).not.toMatch(/-ngl/);
+    expect(notesFor(plan, "llama.cpp").join(" ")).not.toMatch(/vLLM does not offload/);
   });
 
   it("names the tensor-parallel size, and what it does that a layer split does not", () => {

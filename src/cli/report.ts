@@ -1,7 +1,7 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import type { FleetMachine, FleetReport } from "../fleet.js";
-import type { LauncherPlan, LauncherRuntime } from "../launcher.js";
+import { notesFor, type LauncherPlan, type LauncherRuntime } from "../launcher.js";
 import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
@@ -937,11 +937,16 @@ function launcherBlock(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
   }
   if (wants("ollama")) {
     if (lines.length > 0) lines.push("");
-    lines.push(
-      "  Ollama  (Modelfile)",
-      ...plan.ollama.modelfile.map((line) => `    ${line}`),
-      `    ${plan.ollama.environment.join("  ")}`,
-    );
+    lines.push("  Ollama  (Modelfile)", ...plan.ollama.modelfile.map((line) => `    ${line}`));
+    // The environment variables are not Modelfile commands: `ollama create`
+    // rejects a file that carries them, and this block is meant to be pasted.
+    if (plan.ollama.environment.length > 0) {
+      lines.push(
+        "",
+        "  Ollama  (environment, not the Modelfile)",
+        ...plan.ollama.environment.map((line) => `    ${line}`),
+      );
+    }
   }
   if (wants("vllm")) {
     if (lines.length > 0) lines.push("");
@@ -953,9 +958,10 @@ function launcherBlock(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
 /** The `Launch` section of `vramfit check --launcher`. */
 export function renderLaunch(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
   const lines = ["Launch", ...launcherBlock(plan, runtime)];
-  if (plan.notes.length > 0) {
+  const notes = notesFor(plan, runtime);
+  if (notes.length > 0) {
     lines.push("");
-    for (const note of plan.notes) {
+    for (const note of notes) {
       const wrapped = wrap(note, WRAP_WIDTH, "    ");
       lines.push(`  - ${(wrapped[0] ?? "").trimStart()}`, ...wrapped.slice(1));
     }
