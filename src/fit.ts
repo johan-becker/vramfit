@@ -37,6 +37,8 @@ export const DEFAULT_SYSTEM_RAM_GIB = 32;
 export const DEFAULT_SYSTEM_RAM_BANDWIDTH_GBS = 89.6;
 /** A modern desktop CPU's dense FP16 throughput, for offloaded prefill. */
 export const DEFAULT_SYSTEM_COMPUTE_TFLOPS = 1.5;
+/** llama.cpp's own `--ubatch-size`, which `computeActivationBytes` assumes. */
+export const DEFAULT_PHYSICAL_BATCH = 512;
 
 export interface FitOptions {
   /** Defaults to the model's own default context. */
@@ -101,6 +103,10 @@ export interface FitResult {
   ctx: number;
   batch: number;
   gpus: number;
+  /** llama.cpp's `--ubatch-size`, which set the compute buffer's width. */
+  physicalBatch: number;
+  /** Whether the compute buffer was sized with flash attention available. */
+  flashAttention: boolean;
   footprint: MemoryFootprint;
   capacity: Capacity;
   usedBytes: number;
@@ -346,6 +352,8 @@ export function checkFit(
     ctx,
     batch,
     gpus,
+    physicalBatch: Math.max(1, Math.floor(options.physicalBatch ?? DEFAULT_PHYSICAL_BATCH)),
+    flashAttention: options.flashAttention ?? true,
     footprint,
     capacity,
     usedBytes: footprint.totalBytes,

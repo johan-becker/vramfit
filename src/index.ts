@@ -95,6 +95,7 @@ export type {
   QuantSearchOptions,
 } from "./fit.js";
 export {
+  DEFAULT_PHYSICAL_BATCH,
   DEFAULT_SYSTEM_COMPUTE_TFLOPS,
   DEFAULT_SYSTEM_RAM_BANDWIDTH_GBS,
   DEFAULT_SYSTEM_RAM_GIB,
@@ -113,6 +114,22 @@ export {
   recommendModels,
 } from "./recommend.js";
 export type { Recommendation, RecommendOptions, UseCase, UseCaseProfile } from "./recommend.js";
+
+export {
+  LAUNCHER_RUNTIMES,
+  findLauncherRuntime,
+  gpuLayersFor,
+  gpuMemoryUtilizationFor,
+  launcherPlan,
+} from "./launcher.js";
+export type {
+  LauncherOptions,
+  LauncherPlan,
+  LauncherRuntime,
+  LlamaCppPlan,
+  OllamaPlan,
+  VllmPlan,
+} from "./launcher.js";
 
 export { compareDevices, parseDeviceList } from "./compare.js";
 export { parseFleetConfig, planFleet } from "./fleet.js";
