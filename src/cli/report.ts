@@ -1,6 +1,7 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import { findQuant } from "../quant.js";
+import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import type { ResolvedModel } from "./source.js";
@@ -591,6 +592,112 @@ export function compareJson(
       decodeTokensPerSecond: row.decodeTokensPerSecond,
       offloadFeasible: row.fit.offload === null || row.fit.offload.feasible,
       best: row.best,
+    })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* recommend                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The `vramfit recommend` list.
+ *
+ * An aligned table would fit more rows on a screen and answer less: the point
+ * of the command is the trade-off, not the ranking, so each row carries its
+ * own sentence underneath. The header line is still produced by `renderTable`,
+ * so the columns line up across rows that have prose between them.
+ */
+export function renderRecommend(
+  device: DeviceSpec,
+  profile: UseCaseProfile,
+  rows: readonly Recommendation[],
+  ctx: number,
+  gpus: number,
+): string[] {
+  const deviceName = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  const heading = `${deviceName}  |  ${profile.label}  |  ${formatContext(ctx)} context`;
+  const lines = [heading, "=".repeat(heading.length), ""];
+
+  if (rows.length === 0) {
+    return [
+      ...lines,
+      ...wrap(
+        `Nothing in the bundled database fits ${deviceName} at ${formatContext(ctx)} of context, even at Q2_K. Reduce the context with --ctx, quantize the cache with --kv-quant q8_0, or run "vramfit check <model> -d ${device.id}" to see what a partial offload would cost.`,
+        WRAP_WIDTH,
+      ),
+    ];
+  }
+
+  const table = renderTable(
+    [
+      { header: "#", align: "right" },
+      { header: "Model" },
+      { header: "Params", align: "right" },
+      { header: "Quant" },
+      { header: "Total", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows.map((row, index) => [
+      `${index + 1}.`,
+      row.model.name,
+      formatParams(row.model.totalParams),
+      row.quant.label,
+      formatBytes(row.fit.footprint.totalBytes),
+      formatContext(row.maxContext),
+      formatRate(row.decodeTokensPerSecond),
+    ]),
+  );
+
+  const [header, separator, ...body] = table;
+  lines.push(header as string, separator as string);
+  body.forEach((line, index) => {
+    const row = rows[index];
+    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, "    ")), "");
+  });
+
+  lines.push(
+    ...wrap(
+      `Ranked by parameter count on a log scale, times a quantization-quality factor, times decode speed against ${profile.comfortableDecode} tok/s -- ${profile.why}. vramfit has no benchmark data and does not rank models by how good they are at anything.`,
+      WRAP_WIDTH,
+    ),
+  );
+  return lines;
+}
+
+/** The `vramfit recommend --json` payload. */
+export function recommendJson(
+  device: DeviceSpec,
+  profile: UseCaseProfile,
+  rows: readonly Recommendation[],
+  ctx: number,
+  gpus: number,
+  version: string,
+): unknown {
+  return {
+    vramfit: version,
+    device: { id: device.id, name: device.name, vramGiB: device.vramGiB, count: gpus },
+    useCase: {
+      id: profile.id,
+      comfortableDecodeTokensPerSecond: profile.comfortableDecode,
+      ctx,
+    },
+    models: rows.map((row) => ({
+      id: row.model.id,
+      name: row.model.name,
+      totalParams: row.model.totalParams,
+      activeParams: row.model.activeParams,
+      quant: row.quant.id,
+      totalBytes: row.fit.footprint.totalBytes,
+      headroomBytes: row.fit.headroomBytes,
+      maxContext: row.maxContext,
+      decodeTokensPerSecond: row.decodeTokensPerSecond,
+      score: row.score,
+      capability: row.capability,
+      quality: row.quality,
+      speed: row.speed,
+      tradeoff: row.tradeoff,
     })),
   };
 }

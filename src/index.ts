@@ -105,6 +105,18 @@ export {
   recommendQuant,
 } from "./fit.js";
 
+export {
+  USE_CASES,
+  USE_CASE_IDS,
+  effectiveCapabilityParams,
+  findUseCase,
+  recommendModels,
+} from "./recommend.js";
+export type { Recommendation, RecommendOptions, UseCase, UseCaseProfile } from "./recommend.js";
+
+export { compareDevices, parseDeviceList } from "./compare.js";
+export type { DeviceCandidate, DeviceComparison } from "./compare.js";
+
 export type {
   BandwidthPair,
   BlendedBandwidth,
