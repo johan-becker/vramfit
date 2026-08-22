@@ -1,0 +1,54 @@
+{
+  "name": "vramfit",
+  "version": "0.1.0",
+  "description": "Will this model run on my machine, and how fast? VRAM, KV-cache and throughput arithmetic for local LLM inference.",
+  "keywords": [
+    "llm",
+    "vram",
+    "kv-cache",
+    "quantization",
+    "gguf",
+    "llama.cpp",
+    "gpu",
+    "capacity-planning"
+  ],
+  "license": "Apache-2.0",
+  "author": "Johan Becker",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "vramfit": "dist/bin/vramfit.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/finish-build.mjs",
+    "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
+    "lint": "oxlint --deny-warnings src test scripts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "oxlint": "^1.79.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

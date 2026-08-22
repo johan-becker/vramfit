@@ -1,0 +1,26 @@
+# Build output
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Test / tooling caches
+coverage/
+.vitest/
+.oxlintcache
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and local env
+*.log
+npm-debug.log*
+.env
+.env.local
