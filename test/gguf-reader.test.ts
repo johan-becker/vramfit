@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ggmlBitsPerWeight, findGgmlType, isGgufArray } from "../src/gguf/format.js";
+import { GGML_TYPES, ggmlBitsPerWeight, findGgmlType, isGgufArray } from "../src/gguf/format.js";
 import { GgufError, readGgufHeader } from "../src/gguf/reader.js";
 import {
   GgufBuilder,
@@ -331,11 +331,15 @@ describe("ggml type table", () => {
   });
 
   it("has no id claimed twice", () => {
-    const ids = new Set<number>();
-    for (const type of [12, 14, 8, 1, 0, 30, 39]) {
-      expect(findGgmlType(type)).toBeDefined();
-      expect(ids.has(type)).toBe(false);
-      ids.add(type);
+    // The lookup is built with `new Map`, so a duplicate id would be resolved
+    // silently -- last entry wins -- and every tensor of the shadowed type
+    // would be sized with the wrong block layout. The table itself is what
+    // has to be asserted over; a hand-written list of distinct literals
+    // cannot fail whatever the table says.
+    expect(new Set(GGML_TYPES.map((type) => type.id)).size).toBe(GGML_TYPES.length);
+    expect(new Set(GGML_TYPES.map((type) => type.name)).size).toBe(GGML_TYPES.length);
+    for (const type of GGML_TYPES) {
+      expect(findGgmlType(type.id)?.name, type.name).toBe(type.name);
     }
   });
 });
