@@ -76,7 +76,7 @@ body:
     attributes:
       label: Before submitting
       options:
-        - label: I checked that this is not one of the documented limitations in README section 7.
+        - label: I checked that this is not one of the documented limitations in README section 11.
           required: true
         - label: I am reporting one problem, not a list.
           required: true
