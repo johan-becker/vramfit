@@ -334,8 +334,8 @@ Notes
 | `--ram <GiB>` | System RAM available for offloaded layers |
 | `--ram-bandwidth <GB/s>` | System RAM bandwidth, default 89.6 (DDR5-5600) |
 | `--cpu-tflops <n>` | CPU dense FP16 throughput, for offloaded prefill |
-| `--efficiency <0-1>` | Override the memory-bandwidth efficiency |
-| `--prefill-efficiency <0-1>` | Override the prefill MFU |
+| `--efficiency <0-1>` | Override the device's memory-bandwidth efficiency; offloaded layers keep their derived figure |
+| `--prefill-efficiency <0-1>` | Override the device's prefill MFU, on the same terms |
 | `--model-json <path>` | Use a model spec from a file instead of the database |
 | `--device-json <path>` | Use a device spec from a file instead of the database |
 | `--json` | Machine-readable output |

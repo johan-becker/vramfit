@@ -60,9 +60,13 @@ export interface FitOptions {
   systemComputeTflops?: number;
   /** Prompt length for time-to-first-token. Defaults to the context. */
   promptTokens?: number;
-  /** Override the derived memory-bandwidth efficiency. */
+  /**
+   * Override the derived memory-bandwidth efficiency of the *device*. The
+   * system-RAM side of a partial offload keeps its own derived figure, because
+   * a measurement taken on the GPU says nothing about DDR5 dequantization.
+   */
   efficiency?: number;
-  /** Override the derived prefill MFU. */
+  /** Override the derived prefill MFU of the device, on the same terms. */
   prefillEfficiency?: number;
 }
 
@@ -281,11 +285,15 @@ export function checkFit(
         (device.unifiedMemory ? device.bandwidthGBs : DEFAULT_SYSTEM_RAM_BANDWIDTH_GBS)) *
       GB_DECIMAL;
     const bits = footprint.weights.effectiveBitsPerWeight;
+    // `--efficiency` and `--prefill-efficiency` are calibrated by measuring a
+    // device-resident run, so they override the device side only. Applying
+    // them to the host as well would let a datacenter-grade measurement speed
+    // up DDR5, and the harmonic blend is dominated by exactly that slow side.
     const bandwidth = blendBandwidth(plan, {
       devicePeakBytesPerSecond: device.bandwidthGBs * GB_DECIMAL,
       deviceEfficiency: options.efficiency ?? bandwidthEfficiency(device.family, bits),
       hostPeakBytesPerSecond: hostPeak,
-      hostEfficiency: options.efficiency ?? bandwidthEfficiency("cpu", bits),
+      hostEfficiency: bandwidthEfficiency("cpu", bits),
     });
 
     const compute = blendCompute(plan, {
@@ -293,7 +301,7 @@ export function checkFit(
       deviceEfficiency: options.prefillEfficiency ?? PREFILL_MFU[device.family],
       hostPeakFlopsPerSecond:
         (options.systemComputeTflops ?? DEFAULT_SYSTEM_COMPUTE_TFLOPS) * TFLOP,
-      hostEfficiency: options.prefillEfficiency ?? PREFILL_MFU.cpu,
+      hostEfficiency: PREFILL_MFU.cpu,
     });
 
     const systemRamAvailableBytes = (options.systemRamGiB ?? DEFAULT_SYSTEM_RAM_GIB) * GIB;
