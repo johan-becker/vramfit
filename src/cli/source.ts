@@ -154,6 +154,7 @@ export function resolveGgufPath(io: SourceIo, path: string): ResolvedModel {
     origin: "gguf",
     from: path,
     description: describeGgufSource(path, gguf),
+    notes: gguf.notes,
   };
 }
 

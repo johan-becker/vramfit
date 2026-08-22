@@ -140,19 +140,23 @@ function kvLines(fit: FitResult): string[] {
   } else {
     const windowCtx = Math.min(fit.ctx, window?.windowSize ?? fit.ctx);
     const perLayer = 2 * model.nKvHeads * model.headDim * perElement * fit.batch;
-    lines.push(
-      {
+    // A model that states a window and no period has no full-attention layer
+    // at all, and a "0 global = 0.000 GiB" row explains nothing.
+    if (fullLayers > 0) {
+      lines.push({
         label: `${fullLayers} global`,
         expression: `2 x ${fullLayers} x ${model.nKvHeads} x ${model.headDim} x ${fit.ctx} x ${fit.batch} x ${perElement}`,
         value: gib(perLayer * fit.ctx * fullLayers),
-      },
-      {
-        label: `${windowed} windowed`,
-        expression: `2 x ${windowed} x ${model.nKvHeads} x ${model.headDim} x ${windowCtx} x ${fit.batch} x ${perElement}`,
-        value: gib(perLayer * windowCtx * windowed),
-      },
-      { label: "total", expression: "", value: gib(footprint.kv.totalBytes) },
-    );
+      });
+    }
+    lines.push({
+      label: `${windowed} windowed`,
+      expression: `2 x ${windowed} x ${model.nKvHeads} x ${model.headDim} x ${windowCtx} x ${fit.batch} x ${perElement}`,
+      value: gib(perLayer * windowCtx * windowed),
+    });
+    if (fullLayers > 0) {
+      lines.push({ label: "total", expression: "", value: gib(footprint.kv.totalBytes) });
+    }
   }
 
   return [

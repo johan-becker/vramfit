@@ -170,13 +170,20 @@ function moeFrom(config: Json, nLayers: number, ffnHidden: number): MoeSpec | nu
 }
 
 /**
- * Interleaved sliding-window attention.
+ * Sliding-window attention.
  *
- * Two traps. Qwen2 writes a `sliding_window` that is inert unless
+ * Three traps. Qwen2 writes a `sliding_window` that is inert unless
  * `use_sliding_window` is true, so honouring it there would undersize the
- * cache by the ratio of window to context -- the dangerous direction. And
- * Gemma 3 states its 5-local-to-1-global pattern in `sliding_window_pattern`,
- * while Gemma 2 states nothing and simply alternates.
+ * cache by the ratio of window to context -- the dangerous direction. Gemma 3
+ * states its 5-local-to-1-global pattern in `sliding_window_pattern`, and
+ * newer configs list every layer's flavour in `layer_types` instead.
+ *
+ * And the third: a config that states a window and nothing else means every
+ * layer is windowed, which is what `sliding_window` means in transformers
+ * (Mistral, Phi-3, Qwen2 with the switch on). Interleaving belongs to the
+ * models that declare it. Assuming Gemma 2's alternation everywhere put
+ * Mistral 7B's 32K cache at 2.25 GiB, which is neither the 4.00 GiB llama.cpp
+ * allocates nor the 0.50 GiB a runtime that honours the window does.
  */
 function attentionWindowFrom(config: Json): AttentionWindowSpec | null {
   const windowSize = pickNumber(config, ["sliding_window", "attention_window_size"]);
@@ -184,30 +191,55 @@ function attentionWindowFrom(config: Json): AttentionWindowSpec | null {
   if (pickBoolean(config, ["use_sliding_window"]) === false) return null;
 
   const declared = pickNumber(config, ["sliding_window_pattern", "layer_types_period"]);
-  const pattern = declared ?? patternFromLayerTypes(config) ?? 2;
-  if (pattern < 2) return null;
-  return { windowSize, fullAttentionEvery: pattern };
+  // A period of 1 means every layer is a full-attention layer: no windowing.
+  if (declared !== undefined) {
+    return declared < 2 ? null : { windowSize, fullAttentionEvery: declared };
+  }
+
+  const listed = patternFromLayerTypes(config);
+  if (listed !== undefined) {
+    if (listed.kind === "none" || listed.kind === "irregular") return null;
+    return { windowSize, fullAttentionEvery: listed.kind === "period" ? listed.period : null };
+  }
+  return { windowSize, fullAttentionEvery: null };
 }
+
+/** What a `layer_types` list says about the window, when it says anything. */
+type LayerTypes =
+  /** Every layer is a full-attention one: the window is inert. */
+  | { kind: "none" }
+  /** No full-attention layer at all: every layer is windowed. */
+  | { kind: "every" }
+  /** One full-attention layer in every `period`. */
+  | { kind: "period"; period: number }
+  /** A list vramfit's single repeating pattern cannot express. */
+  | { kind: "irregular" };
 
 /**
  * Newer configs list the flavour of every layer in `layer_types` rather than
  * stating a period. The period is the distance between full-attention layers,
  * which is what the KV formula needs; a list that is not periodic is refused
- * rather than averaged, since vramfit models one repeating pattern.
+ * rather than averaged, since vramfit models one repeating pattern -- and
+ * refusing means sizing the cache without a window, which overestimates
+ * rather than under.
  */
-function patternFromLayerTypes(config: Json): number | undefined {
+function patternFromLayerTypes(config: Json): LayerTypes | undefined {
   const raw = config["layer_types"];
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  if (!raw.every((entry) => typeof entry === "string")) return undefined;
+
   const fullAt: number[] = [];
   raw.forEach((entry, index) => {
-    if (typeof entry === "string" && entry.includes("full")) fullAt.push(index);
+    if ((entry as string).includes("full")) fullAt.push(index);
   });
-  if (fullAt.length === 0) return undefined;
+  if (fullAt.length === raw.length) return { kind: "none" };
+  if (fullAt.length === 0) return { kind: "every" };
+
   const first = fullAt[0] as number;
-  if (fullAt.length === 1) return raw.length;
+  if (fullAt.length === 1) return { kind: "period", period: raw.length };
   const period = (fullAt[1] as number) - first;
   const periodic = fullAt.every((position, index) => position === first + index * period);
-  return periodic && period >= 2 ? period : undefined;
+  return periodic && period >= 2 ? { kind: "period", period } : { kind: "irregular" };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -334,6 +366,12 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
   // includes the norms and biases the architecture sum leaves out.
   const derived = deriveArchitecture(draft);
   const notes: string[] = [];
+  const window = draft.attentionWindow;
+  if (window !== null && window.fullAttentionEvery === null) {
+    notes.push(
+      `This config sets sliding_window ${window.windowSize} but neither sliding_window_pattern nor layer_types, so every one of the ${nLayers} layers is sized as windowed -- which is what the field means in transformers. llama.cpp does not implement sliding-window attention for every architecture and may allocate the full context on all of them instead.`,
+    );
+  }
   if (tiedDeclared === undefined) {
     notes.push(
       `This config does not set tie_word_embeddings, which transformers defaults to true and writes out only when it is false. The output projection is therefore charged as the embedding table rather than as a second ${vocabSize} x ${hiddenSize} matrix; pass a spec with --model-json if the checkpoint really does carry both.`,

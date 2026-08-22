@@ -3,7 +3,7 @@ import { getDevice } from "../src/db/index.js";
 import { checkFit } from "../src/fit.js";
 import { describeGguf, modelFromGguf, quantFromGguf } from "../src/gguf/model.js";
 import { GgufError, readGgufHeader } from "../src/gguf/reader.js";
-import { computeWeightBytes } from "../src/memory.js";
+import { computeKvCacheBytes, computeWeightBytes } from "../src/memory.js";
 import { SpecValidationError } from "../src/db/validate.js";
 import {
   GgufBuilder,
@@ -148,6 +148,21 @@ describe("modelFromGguf", () => {
       ),
     );
     expect(flat.attentionWindow).toBeNull();
+  });
+
+  it("windows every layer when the file states a window and no pattern", () => {
+    // Interleaving is what the pattern key says, not what the window key
+    // implies: guessing Gemma 2's alternation for a file that declares no
+    // pattern halves the cache of a model with no full-attention layer.
+    const described = describeGguf(
+      header(llamaGgufBuilder().kv("llama.attention.sliding_window", u32(4096)).build()),
+    );
+    expect(described.model.attentionWindow).toEqual({ windowSize: 4096, fullAttentionEvery: null });
+
+    const kv = computeKvCacheBytes(described.model, { ctx: 32_768 });
+    expect(kv.windowedLayers).toBe(32);
+    expect(kv.totalBytes).toBe(2 * 32 * 8 * 128 * 4096 * 2);
+    expect(described.notes.join(" ")).toMatch(/every one of the 32 layers is sized as windowed/);
   });
 
   it("refuses a file whose metadata contradicts its own shape table", () => {
