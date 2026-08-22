@@ -7,7 +7,7 @@ import {
   type BlendedCompute,
   type OffloadPlan,
 } from "./offload.js";
-import { GGUF_QUANT_FAMILIES, getKvQuant, quantsByQuality } from "./quant.js";
+import { GGUF_QUANT_FAMILIES, findQuant, getKvQuant, quantsByQuality } from "./quant.js";
 import {
   PREFILL_MFU,
   bandwidthEfficiency,
@@ -385,14 +385,35 @@ export interface QuantSearchOptions extends FitOptions {
   families?: ReadonlySet<string>;
 }
 
+/**
+ * The quantizations worth considering for one model.
+ *
+ * Normally that is an ecosystem: the GGUF families, best quality first. A
+ * model released in a quantization of its own -- gpt-oss ships as MXFP4 -- is
+ * different. Its native format is the best quality that exists for it, and a
+ * wider requantization is a larger file holding exactly the same weights, so
+ * the candidates are the native format and the narrower ones, in that order.
+ */
+function candidateQuants(model: ModelSpec, options: QuantSearchOptions): QuantSpec[] {
+  const families = options.families ?? GGUF_QUANT_FAMILIES;
+  const ranked = quantsByQuality(families);
+  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
+  if (native === undefined) return ranked;
+  return [
+    native,
+    ...ranked.filter(
+      (quant) => quant.id !== native.id && quant.bitsPerWeight < native.bitsPerWeight,
+    ),
+  ];
+}
+
 /** Every candidate quantization, best quality first, each fully evaluated. */
 export function evaluateQuants(
   model: ModelSpec,
   device: DeviceSpec,
   options: QuantSearchOptions = {},
 ): QuantOption[] {
-  const families = options.families ?? GGUF_QUANT_FAMILIES;
-  return quantsByQuality(families).map((quant) => {
+  return candidateQuants(model, options).map((quant) => {
     const fit = checkFit(model, quant, device, options);
     return {
       quant,

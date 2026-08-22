@@ -1,4 +1,5 @@
 import { deriveArchitecture } from "../architecture.js";
+import { findQuant } from "../quant.js";
 import type {
   AttentionKind,
   AttentionWindowSpec,
@@ -338,6 +339,10 @@ export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
   const windowRaw = nullableObject(raw, "attentionWindow", path);
 
   const notes = optionalStr(raw, "notes", path);
+  const nativeQuant = optionalStr(raw, "nativeQuant", path);
+  if (nativeQuant !== undefined && findQuant(nativeQuant) === undefined) {
+    fail(`${path}.nativeQuant`, `must name a known quantization, got ${describe(nativeQuant)}`);
+  }
   const spec: ModelSpec = {
     id: str(raw, "id", path),
     name: str(raw, "name", path),
@@ -361,6 +366,7 @@ export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
     defaultCtx,
     source: str(raw, "source", path),
   };
+  if (nativeQuant !== undefined) spec.nativeQuant = nativeQuant;
   if (notes !== undefined) spec.notes = notes;
 
   if (spec.moe === null && activeParams !== totalParams) {

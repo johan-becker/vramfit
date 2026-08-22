@@ -97,6 +97,17 @@ describe("bundled model database", () => {
     expect(MODELS.length).toBeGreaterThanOrEqual(20);
   });
 
+  it("declares the format the natively-quantized models ship in", () => {
+    for (const model of MODELS) {
+      const native = model.nativeQuant;
+      if (model.id.startsWith("gpt-oss")) {
+        expect(native, model.id).toBe("mxfp4");
+      } else {
+        expect(native, model.id).toBeUndefined();
+      }
+    }
+  });
+
   it("reconstructs every published parameter count from the architecture", () => {
     for (const model of MODELS) {
       const arch = deriveArchitecture(model);
@@ -459,6 +470,16 @@ describe("validation", () => {
     expect(() => parseDeviceSpec(aliased)).toThrow(
       /aliases\[1\] must not contain control characters/,
     );
+  });
+
+  it("rejects a native quantization the tables do not know", () => {
+    const raw = validModel();
+    raw["nativeQuant"] = "fp3";
+    expect(() => parseModelSpec(raw, "my-model.json")).toThrow(
+      /my-model\.json\.nativeQuant must name a known quantization/,
+    );
+    raw["nativeQuant"] = "mxfp4";
+    expect(parseModelSpec(raw).nativeQuant).toBe("mxfp4");
   });
 
   it("rejects a device that claims more usable memory than it has", () => {

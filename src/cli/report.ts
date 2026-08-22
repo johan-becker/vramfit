@@ -1,4 +1,5 @@
 import type { FitResult, QuantOption } from "../fit.js";
+import { findQuant } from "../quant.js";
 import type { DeviceSpec, ModelSpec } from "../types.js";
 import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import {
@@ -314,6 +315,7 @@ export function renderBest(
   ]);
 
   const starved = options.find(isOffloadInfeasible);
+  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
   const recommended = options.find((option) => option.fit.fits);
 
   return [
@@ -336,6 +338,12 @@ export function renderBest(
     ...(options.some((option) => !option.fit.fits)
       ? wrap(
           "Rows that do not fit show the decode speed with as many layers as possible offloaded to system RAM, which is what you would actually get.",
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(native
+      ? wrap(
+          `${model.name} ships in ${native.label}, so that is the best quality there is for it: a wider quantization would be a larger file holding the same ${native.bitsPerWeight} bits per weight, and is left out.`,
           WRAP_WIDTH,
         ).concat("")
       : []),
