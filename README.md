@@ -190,8 +190,10 @@ different formula entirely:
   plus a decoupled RoPE key, shared across every head:
   `n_layers x (kv_lora_rank + qk_rope_head_dim) x ctx x batch x bpe`. No factor
   of two and no head count — 576 elements per token per layer instead of 4096.
-- **Interleaved sliding-window attention** (Gemma 2/3, gpt-oss) caps most
-  layers at `window_size` tokens and keeps only every Nth layer global.
+- **Sliding-window attention** caps a local layer at `window_size` tokens.
+  Gemma 2/3 and gpt-oss *interleave*, keeping every Nth layer global; a
+  checkpoint that states a window and no period at all (Mistral, Phi-3) windows
+  every layer, and is modelled that way rather than assumed to alternate.
 
 At 32K tokens, batch 1, `f16` — measured against what the naive `n_heads`
 formula would have charged:
@@ -460,6 +462,8 @@ one wrong is worth gigabytes:
 | expert count | `num_local_experts` on Mixtral, `num_experts` on Qwen3-MoE, `n_routed_experts` on DeepSeek |
 | shared experts | Qwen publishes a combined *width*, DeepSeek publishes a *count* |
 | `sliding_window` | Set but inert on Qwen2 unless `use_sliding_window` is true — honouring it undersizes the cache |
+| `sliding_window_pattern` / `layer_types` | Only these state the interleaving. A bare `sliding_window` windows *every* layer; assuming Gemma 2's alternation instead undersizes Mistral 7B's 32K cache by 44% |
+| `tie_word_embeddings` | Absent means **true**: `PretrainedConfig` defaults it that way and `save_pretrained` writes only what differs, so the checkpoints that tie are the ones that never mention it |
 | `text_config` | Multimodal releases nest the decoder inside it, with the vision tower beside it |
 
 The last one has a consequence worth stating: when the weight files hold more

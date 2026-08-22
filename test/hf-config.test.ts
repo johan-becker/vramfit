@@ -220,6 +220,71 @@ describe("modelFromHfConfig", () => {
     expect(model.attentionWindow).toBeNull();
   });
 
+  it("windows every layer when the config states a window and no period", () => {
+    // Mistral 7B: sliding_window and nothing else. In transformers that means
+    // every layer is windowed; the interleaving is a Gemma property stated in
+    // sliding_window_pattern. Assuming it here put the 32K cache at 2.25 GiB,
+    // which is neither runtime's answer.
+    const MISTRAL_7B = {
+      _name_or_path: "mistralai/Mistral-7B-v0.1",
+      model_type: "mistral",
+      hidden_size: 4096,
+      intermediate_size: 14_336,
+      max_position_embeddings: 32_768,
+      num_attention_heads: 32,
+      num_hidden_layers: 32,
+      num_key_value_heads: 8,
+      sliding_window: 4096,
+      tie_word_embeddings: false,
+      torch_dtype: "bfloat16",
+      vocab_size: 32_000,
+    };
+
+    const { model, notes } = modelFromHfConfig(MISTRAL_7B);
+    expect(model.attentionWindow).toEqual({ windowSize: 4096, fullAttentionEvery: null });
+
+    const kv = computeKvCacheBytes(model, { ctx: 32_768 });
+    expect(kv.windowedLayers).toBe(32);
+    // 32 layers x 4096 tokens, not 16 of them at 32K.
+    expect(kv.totalBytes).toBe(2 * 32 * 8 * 128 * 4096 * 2);
+    expect(notes.join(" ")).toMatch(/every one of the 32 layers is sized as windowed/);
+    expect(notes.join(" ")).toMatch(/llama\.cpp does not implement sliding-window attention/);
+  });
+
+  it("reads a layer_types list that names no full-attention layer", () => {
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: Array.from({ length: 32 }, () => "sliding_attention"),
+    });
+    expect(model.attentionWindow).toEqual({ windowSize: 512, fullAttentionEvery: null });
+  });
+
+  it("ignores a window every layer_types entry contradicts", () => {
+    // Every layer full attention is not windowing at all, whatever
+    // sliding_window says beside it.
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: Array.from({ length: 32 }, () => "full_attention"),
+    });
+    expect(model.attentionWindow).toBeNull();
+  });
+
+  it("refuses a layer_types list that is not one repeating pattern", () => {
+    // vramfit models one period. A list that is not periodic is sized without
+    // a window, which overestimates the cache rather than under.
+    const layerTypes = Array.from({ length: 32 }, (_, index) =>
+      index === 0 || index === 5 || index === 31 ? "full_attention" : "sliding_attention",
+    );
+    const { model } = modelFromHfConfig({
+      ...LLAMA_31_8B,
+      sliding_window: 512,
+      layer_types: layerTypes,
+    });
+    expect(model.attentionWindow).toBeNull();
+  });
+
   it("reads the period out of a layer_types list", () => {
     const layerTypes = Array.from({ length: 32 }, (_, index) =>
       (index + 1) % 4 === 0 ? "full_attention" : "sliding_attention",

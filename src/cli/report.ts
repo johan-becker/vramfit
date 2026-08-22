@@ -537,7 +537,7 @@ export function modelsTableShape(models: readonly ModelSpec[]): TableShape {
       model.attention === "mla"
         ? "MLA"
         : model.attentionWindow
-          ? `GQA + SWA/${model.attentionWindow.fullAttentionEvery}`
+          ? `GQA + SWA${model.attentionWindow.fullAttentionEvery === null ? "" : `/${model.attentionWindow.fullAttentionEvery}`}`
           : "GQA",
     ]),
   };

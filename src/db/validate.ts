@@ -279,11 +279,15 @@ function parseAttentionWindow(
     windowSize: num(raw, "windowSize", path, { integer: true, above: 0, max: MAX_CTX }),
     // 1 would mean "every layer is a full-attention layer", i.e. no windowing;
     // express that as attentionWindow: null instead of a degenerate block.
-    fullAttentionEvery: num(raw, "fullAttentionEvery", path, {
-      integer: true,
-      min: 2,
-      max: MAX_LAYERS,
-    }),
+    // An explicit null is the other end: every layer windowed, no period.
+    fullAttentionEvery:
+      raw["fullAttentionEvery"] === null
+        ? null
+        : num(raw, "fullAttentionEvery", path, {
+            integer: true,
+            min: 2,
+            max: MAX_LAYERS,
+          }),
   };
 }
 
