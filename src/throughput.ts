@@ -1,4 +1,7 @@
-import type { DeviceFamily } from "./types.js";
+import { deriveArchitecture } from "./architecture.js";
+import { computeKvCacheBytes, computeWeightBytes } from "./memory.js";
+import type { DeviceFamily, DeviceSpec, ModelSpec, QuantSpec } from "./types.js";
+import { GB_DECIMAL, TFLOP } from "./units.js";
 
 /**
  * Rule 5: throughput.
@@ -181,5 +184,180 @@ export function estimateDecodeFrom(input: DecodeInput): DecodeEstimate {
     bytesPerStep,
     effectiveBandwidthBytesPerSecond,
     efficiency: input.efficiency,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Prefill                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface PrefillEstimate {
+  /** Prompt tokens processed per second. */
+  tokensPerSecond: number;
+  /** FLOPs to process one prompt token at the requested context. */
+  flopsPerToken: number;
+  /** Share coming from attention rather than from the weight matmuls. */
+  attentionFlopsPerToken: number;
+  effectiveFlopsPerSecond: number;
+  efficiency: number;
+}
+
+/** Width of the per-layer attention that the score matmuls actually run at. */
+function attentionWidth(model: ModelSpec): number {
+  if (model.attention === "mla" && model.mla) {
+    // MLA reconstructs full-width heads before attending, so the score matmul
+    // is sized by the decompressed head width, not by the cached latent.
+    return model.nHeads * (model.mla.qkNopeHeadDim + model.mla.qkRopeHeadDim);
+  }
+  return model.nHeads * model.headDim;
+}
+
+/**
+ * Tokens each layer attends over, summed across layers. Sliding-window layers
+ * only ever see `windowSize` of them, which is most of why Gemma 3 prefills
+ * long prompts far faster than its parameter count suggests.
+ */
+function attendedTokensAcrossLayers(model: ModelSpec, ctx: number): number {
+  const window = model.attentionWindow;
+  let total = 0;
+  for (let layer = 0; layer < model.nLayers; layer++) {
+    const isFull = !window || (layer + 1) % window.fullAttentionEvery === 0;
+    total += isFull ? ctx : Math.min(ctx, window.windowSize);
+  }
+  return total;
+}
+
+/**
+ * Prefill FLOPs per prompt token.
+ *
+ *   matmuls:   2 * active_params      (one multiply and one add per weight)
+ *   attention: 2 * 2 * attended * width per layer, halved for causal masking
+ *
+ * `active_params` excludes the token embedding table -- looking a row up is
+ * not a matmul -- but includes the output projection, and for a mixture of
+ * experts counts only the experts a token is routed to.
+ *
+ * The causal factor of 1/2 is the average over prompt positions: the first
+ * token attends to nothing, the last to the whole prompt.
+ */
+export function prefillFlopsPerToken(model: ModelSpec, ctx: number): number {
+  const arch = deriveArchitecture(model);
+  const matmulFlops = 2 * arch.activeMatmulParams;
+  // QK^T and (scores x V): two matmuls, 2 FLOPs each per element.
+  const attentionFlops = 2 * attendedTokensAcrossLayers(model, ctx) * attentionWidth(model);
+  return matmulFlops + attentionFlops;
+}
+
+export interface PrefillInput {
+  model: ModelSpec;
+  ctx: number;
+  /** Peak dense FP16 throughput in FLOP/s. */
+  peakFlopsPerSecond: number;
+  /** Model FLOPs utilisation, 0-1. */
+  efficiency: number;
+}
+
+export function estimatePrefillFrom(input: PrefillInput): PrefillEstimate {
+  const ctx = Math.max(1, Math.floor(input.ctx));
+  const arch = deriveArchitecture(input.model);
+  const flopsPerToken = prefillFlopsPerToken(input.model, ctx);
+  const effectiveFlopsPerSecond = input.peakFlopsPerSecond * input.efficiency;
+
+  return {
+    tokensPerSecond:
+      flopsPerToken > 0 ? effectiveFlopsPerSecond / flopsPerToken : 0,
+    flopsPerToken,
+    attentionFlopsPerToken: flopsPerToken - 2 * arch.activeMatmulParams,
+    effectiveFlopsPerSecond,
+    efficiency: input.efficiency,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Composition                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface ThroughputOptions {
+  ctx: number;
+  batch?: number;
+  kvQuant?: string;
+  /** Prompt length for time-to-first-token. Defaults to the full context. */
+  promptTokens?: number;
+  /**
+   * Peak read bandwidth in bytes/second, overriding the device's own. Partial
+   * offload passes the blended VRAM/system-RAM figure through here.
+   */
+  peakBandwidthBytesPerSecond?: number;
+  /** Override the derived memory-bandwidth efficiency (0-1). */
+  efficiency?: number;
+  /** Override the derived prefill MFU (0-1). */
+  prefillEfficiency?: number;
+}
+
+export interface ThroughputEstimate {
+  decode: DecodeEstimate;
+  prefill: PrefillEstimate;
+  /** Seconds to process `promptTokens` before the first token appears. */
+  timeToFirstTokenSeconds: number;
+  decodeErrorBand: number;
+  prefillErrorBand: number;
+}
+
+/**
+ * Full throughput estimate for a model that fits entirely in device memory.
+ *
+ * Multi-GPU is deliberately absent here. llama.cpp's default `--split-mode
+ * layer` gives each card a contiguous slice of the model and runs them in
+ * sequence, so the same total bytes still cross a bus per token and decode
+ * speed is unchanged -- adding cards buys capacity, not speed. Tensor-parallel
+ * runtimes (vLLM, TensorRT-LLM) do scale decode, roughly 0.7-0.9x per added
+ * device once interconnect sync is paid for, but that is a different
+ * deployment and is not what this number describes.
+ */
+export function estimateThroughput(
+  model: ModelSpec,
+  quant: QuantSpec,
+  device: DeviceSpec,
+  options: ThroughputOptions,
+): ThroughputEstimate {
+  const ctx = Math.max(1, Math.floor(options.ctx));
+  const batch = Math.max(1, Math.floor(options.batch ?? 1));
+  const weights = computeWeightBytes(model, quant);
+  const kv = computeKvCacheBytes(model, {
+    ctx,
+    batch,
+    ...(options.kvQuant === undefined ? {} : { kvQuant: options.kvQuant }),
+  });
+
+  const peakBandwidth =
+    options.peakBandwidthBytesPerSecond ?? device.bandwidthGBs * GB_DECIMAL;
+  const efficiency =
+    options.efficiency ?? bandwidthEfficiency(device.family, weights.effectiveBitsPerWeight);
+  const prefillEff = options.prefillEfficiency ?? PREFILL_MFU[device.family];
+
+  const decode = estimateDecodeFrom({
+    weightBytesPerStep: weights.activeBytes,
+    kvBytesPerStep: kv.totalBytes,
+    peakBandwidthBytesPerSecond: peakBandwidth,
+    efficiency,
+    batch,
+  });
+
+  const prefill = estimatePrefillFrom({
+    model,
+    ctx,
+    peakFlopsPerSecond: device.fp16Tflops * TFLOP,
+    efficiency: prefillEff,
+  });
+
+  const promptTokens = Math.max(1, Math.floor(options.promptTokens ?? ctx));
+
+  return {
+    decode,
+    prefill,
+    timeToFirstTokenSeconds:
+      prefill.tokensPerSecond > 0 ? promptTokens / prefill.tokensPerSecond : Number.POSITIVE_INFINITY,
+    decodeErrorBand: DECODE_ERROR_BAND,
+    prefillErrorBand: PREFILL_ERROR_BAND,
   };
 }
