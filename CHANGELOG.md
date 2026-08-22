@@ -21,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`NOTICE`** — the attribution notice required by section 4(d) of the Apache
-  License, carrying the copyright line and the trade mark reservation. It must
-  be included with any redistribution of vramfit.
 - **`TRADEMARKS.md`** — "vramfit" and its logo are unregistered trade marks of
   Johan Becker and are not licensed by the code licence. Nominative use is
   fine; shipping a fork, distribution, hosted service or product under the
@@ -235,7 +232,8 @@ and what exactly do I type to start it.
   against the project.
 - "vramfit" and its logo are unregistered trade marks of Johan Becker and are
   not licensed by the code licence: section 6 withholds trade mark rights
-  expressly. See [`TRADEMARKS.md`](TRADEMARKS.md).
+  expressly. The policy was written up in [`TRADEMARKS.md`](TRADEMARKS.md)
+  after this release; 0.2.0 itself ships only the licence text and `NOTICE`.
 
 ## [0.1.0] - 2026-08-22
 
