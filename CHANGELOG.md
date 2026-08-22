@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`vramfit check ./model.gguf`** — read a real checkpoint instead of the
+  bundled database. The streaming header reader pulls one window at a time and
+  skips what it does not need, so a 40 GB file costs a few hundred kilobytes
+  of reads; the model's shape, attention flavour (GQA, MLA, sliding window)
+  and expert geometry come from the metadata, the parameter count is summed
+  from the shape table, and the bits per weight are measured from the ggml
+  type of every tensor — separately for the blocks, the embedding table and
+  the output head. Little-endian GGUF v2 and v3, every metadata value type
+  including nested arrays. `--gguf <path>` for a file that is not named
+  `.gguf`; `model.origin` and `model.from` in the JSON payload.
 - `nativeQuant` on `ModelSpec`: a model released in a quantization of its own
   is checked in that format by default and ranked by it in `best`, and wider
   requantizations of it are left out. Both gpt-oss entries declare MXFP4, which

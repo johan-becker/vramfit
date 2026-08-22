@@ -1,9 +1,17 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { getDevice, getModel, listDevices, listModels, parseDeviceSpec, parseModelSpec } from "../db/index.js";
 import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
+import { openByteSource } from "../gguf/index.js";
 import { getQuant } from "../quant.js";
-import type { DeviceSpec, ModelSpec } from "../types.js";
+import type { DeviceSpec, QuantSpec } from "../types.js";
 import { Args, UsageError } from "./args.js";
+import {
+  looksLikePath,
+  resolveGgufPath,
+  type PathKind,
+  type ResolvedModel,
+  type SourceIo,
+} from "./source.js";
 import {
   bestJson,
   checkJson,
@@ -22,10 +30,17 @@ import {
  * error text, JSON payloads -- is covered by ordinary unit tests.
  */
 
-export interface Io {
+/**
+ * Everything the CLI is allowed to touch.
+ *
+ * `openBytes` and `pathKind` are optional so that an embedder who only wants
+ * report text -- and the report tests, which have no filesystem at all -- does
+ * not have to implement them. A command that needs one says so by name when it
+ * is missing, rather than reaching around the object to the real disk.
+ */
+export interface Io extends SourceIo {
   out(text: string): void;
   err(text: string): void;
-  readFile(path: string): string;
 }
 
 export const EXIT_OK = 0;
@@ -43,6 +58,14 @@ export const defaultIo: Io = {
   },
   readFile(path) {
     return readFileSync(path, "utf8");
+  },
+  openBytes(path) {
+    return openByteSource(path);
+  },
+  pathKind(path): PathKind {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (stat === undefined) return "missing";
+    return stat.isDirectory() ? "directory" : "file";
   },
 };
 
@@ -75,9 +98,13 @@ COMMANDS
 
 MODEL AND DEVICE
   <model>                  Bundled id, name or alias, e.g. llama-3.1-8b,
-                           "Llama 3.1 8B", llama3.1:8b. See "vramfit models".
+                           "Llama 3.1 8B", llama3.1:8b -- see "vramfit models"
+                           -- or the path to a GGUF file, which is read from
+                           its own header: ./Llama-3.1-8B-Q4_K_M.gguf.
   -d, --device <id>        Bundled device id, name or alias, e.g. 4090,
                            "RTX 4090", m3-max. See "vramfit devices".
+      --gguf <path>        Read the model from a GGUF file whatever it is
+                           named. Only the header is read, never the weights.
       --model-json <path>  Use a model spec from a JSON file instead.
       --device-json <path> Use a device spec from a JSON file instead.
 
@@ -116,6 +143,7 @@ EXAMPLES
   vramfit check llama-3.3-70b -d 3090 -g 2 -q q4_k_m --ctx 8k
   vramfit best qwen2.5-32b --device m3-max
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
+  vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
 
 EXIT CODES
   0  fits    1  does not fit    2  bad usage`;
@@ -124,6 +152,7 @@ const SHARED_FLAGS = [
   "device",
   "device-json",
   "model-json",
+  "gguf",
   "ctx",
   "batch",
   "kv-quant",
@@ -168,15 +197,50 @@ function loadJsonFile<T>(
   return parse(parsed, path);
 }
 
-function resolveModel(args: Args, io: Io): ModelSpec {
-  const path = args.string("model-json");
-  if (path !== undefined) return loadJsonFile(io, path, parseModelSpec);
+/**
+ * A path the user typed as the `<model>` argument.
+ *
+ * The extension decides how to read it: GGUF files are parsed from their own
+ * header. Anything else is refused by name rather than sniffed, because a
+ * wrong guess about a file format is a wrong answer about a deployment.
+ */
+function resolvePath(io: Io, path: string): ResolvedModel {
+  if (path.toLowerCase().endsWith(".gguf")) return resolveGgufPath(io, path);
+  throw new UsageError(
+    `${path} is not a GGUF file. Pass a .gguf path, a bundled model name (see "vramfit models"), or a spec with --model-json.`,
+  );
+}
+
+/** Resolve the `<model>` argument, from the database or from a file. */
+function resolveModelSource(args: Args, io: Io): ResolvedModel {
+  const ggufPath = args.string("gguf");
+  if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
+
+  const specPath = args.string("model-json");
+  if (specPath !== undefined) {
+    return { model: loadJsonFile(io, specPath, parseModelSpec), origin: "json", from: specPath };
+  }
 
   const name = args.positionals[1];
   if (name === undefined) {
     throw new UsageError("A model is required. Try \"vramfit models\" for the bundled list.");
   }
-  return getModel(name);
+  if (looksLikePath(name)) return resolvePath(io, name);
+  return { model: getModel(name), origin: "database", from: name };
+}
+
+/**
+ * The quantization to check in.
+ *
+ * `-q` wins. Otherwise a source that is already in a format -- a GGUF file,
+ * measured from its own tensor table -- dictates it, then a model released in
+ * one, then the default recommendation.
+ */
+function resolveQuant(args: Args, source: ResolvedModel): QuantSpec {
+  const requested = args.string("quant");
+  if (requested !== undefined) return getQuant(requested);
+  if (source.quant !== undefined) return source.quant;
+  return getQuant(source.model.nativeQuant ?? "q4_k_m");
 }
 
 function resolveDevice(args: Args, io: Io): DeviceSpec {
@@ -250,21 +314,22 @@ function runCheck(args: Args, io: Io, version: string): number {
   args.assertKnown([...SHARED_FLAGS, "quant"]);
   assertNoExtraArguments(args, "check", 2);
 
-  const model = resolveModel(args, io);
+  const source = resolveModelSource(args, io);
+  const model = source.model;
   const device = resolveDevice(args, io);
-  // A model released in its own quantization is checked in that format unless
-  // the user asks for another: modelling gpt-oss at Q4_K_M describes a file
-  // nobody publishes.
-  const quant = getQuant(args.string("quant") ?? model.nativeQuant ?? "q4_k_m");
+  // A model released in its own quantization -- or read out of a file that is
+  // already in one -- is checked in that format unless the user asks for
+  // another: modelling gpt-oss at Q4_K_M describes a file nobody publishes.
+  const quant = resolveQuant(args, source);
   const options = fitOptions(args);
 
   const fit = checkFit(model, quant, device, options);
   const recommendation = recommendQuant(model, device, options);
 
   if (args.boolean("json") === true) {
-    emitJson(io, checkJson(fit, recommendation, version));
+    emitJson(io, checkJson(fit, recommendation, version, source));
   } else {
-    emit(io, renderCheck(fit, recommendation));
+    emit(io, renderCheck(fit, recommendation, { source }));
   }
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
@@ -273,7 +338,8 @@ function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
   assertNoExtraArguments(args, "best", 2);
 
-  const model = resolveModel(args, io);
+  const source = resolveModelSource(args, io);
+  const model = source.model;
   const device = resolveDevice(args, io);
   const options = fitOptions(args);
   const evaluated = evaluateQuants(model, device, options);
@@ -282,7 +348,7 @@ function runBest(args: Args, io: Io, version: string): number {
   if (args.boolean("json") === true) {
     emitJson(io, bestJson(model, device, evaluated, ctx, version));
   } else {
-    emit(io, renderBest(model, device, evaluated, ctx, options.gpus ?? 1));
+    emit(io, renderBest(model, device, evaluated, ctx, options.gpus ?? 1, { source }));
   }
   return evaluated.some((option) => option.fit.fits) ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
