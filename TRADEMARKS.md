@@ -3,12 +3,22 @@
 "vramfit" and the vramfit logo are unregistered trade marks of Johan Becker.
 They are **not** licensed to you.
 
-The [Apache License 2.0](LICENSE) that covers this repository grants
+The [Apache License, Version 2.0](LICENSE) that covers this repository grants
 you rights in the **code**. A software licence is not a trade mark licence, and
-this one says so itself: *"This License does not grant permission to use the
-trade names, trademarks, service marks, or product names of the Licensor."*
-Nothing on this page adds a restriction to the code licence — it only describes
-what the code licence never granted.
+this one says so itself — section 6 withholds trade mark rights expressly:
+
+> **6. Trademarks.** This License does not grant permission to use the trade
+> names, trademarks, service marks, or product names of the Licensor, except
+> as required for reasonable and customary use in describing the origin of the
+> Work and reproducing the content of the NOTICE file.
+
+Two things follow from that. First, nothing on this page adds a restriction to
+the code licence — it only describes what the code licence never granted in the
+first place. Second, the one trade mark use the licence positively *requires*
+of you is reproducing the [NOTICE](NOTICE) file: section 4(d) obliges every
+redistributor to carry it, and NOTICE repeats this same reservation. Shipping
+NOTICE unchanged is not a trade mark problem — it is the licence working as
+intended.
 
 ## What you may do
 
