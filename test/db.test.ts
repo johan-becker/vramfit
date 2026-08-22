@@ -365,6 +365,27 @@ describe("validation", () => {
       /moe must be present, use null when it does not apply/,
     ],
     [
+      "a layer count no transformer has",
+      (raw) => {
+        raw["nLayers"] = 20_000_000;
+      },
+      /nLayers must be at most 4096/,
+    ],
+    [
+      "a vocabulary larger than any tokenizer",
+      (raw) => {
+        raw["vocabSize"] = 2 ** 30;
+      },
+      /vocabSize must be at most/,
+    ],
+    [
+      "a name carrying terminal escape sequences",
+      (raw) => {
+        raw["name"] = "Unit\u001B[31m\u001B[2J\nFITS  -  0.00 GiB of 99.00 GiB used";
+      },
+      /name must not contain control characters/,
+    ],
+    [
       "a router that picks more experts than exist",
       (raw) => {
         raw["moe"] = {
@@ -422,6 +443,21 @@ describe("validation", () => {
     // The published figure itself still passes, vocabulary convention and all.
     expect(parseModelSpec(JSON.parse(JSON.stringify(getModel("mixtral-8x7b")))).activeParams).toBe(
       getModel("mixtral-8x7b").activeParams,
+    );
+  });
+
+  it("rejects a device name carrying terminal escape sequences", () => {
+    // A spec pasted from a gist could otherwise clear the screen and print a
+    // forged verdict above the real one: every one of these strings is written
+    // straight into the report.
+    const raw = validDevice();
+    raw["name"] = "Evil\u001B[2J\nFITS  -  0.00 GiB of 99.00 GiB used";
+    expect(() => parseDeviceSpec(raw)).toThrow(/name must not contain control characters/);
+
+    const aliased = validDevice();
+    aliased["aliases"] = ["fine", "not\u0007fine"];
+    expect(() => parseDeviceSpec(aliased)).toThrow(
+      /aliases\[1\] must not contain control characters/,
     );
   });
 

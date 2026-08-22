@@ -58,6 +58,34 @@ const DEVICE_FAMILIES = [
 
 const ATTENTION_KINDS = ["gqa", "mla"] as const satisfies readonly AttentionKind[];
 
+/**
+ * Upper bounds on the shape fields.
+ *
+ * Every one of these is orders of magnitude above anything published -- 126
+ * layers in Llama 3.1 405B, a 262144-token Gemma 3 vocabulary, 256 experts in
+ * DeepSeek V3 -- so they never get in the way of a real spec. They are here
+ * because the KV cache is built one entry per layer and the fit search
+ * re-derives the footprint dozens of times, so an extra keystroke in
+ * `nLayers` turned a hand-written spec into 3.5 GB of RSS and ten seconds of
+ * CPU, or into "Invalid array length" naming neither the field nor the file.
+ */
+const MAX_LAYERS = 4096;
+const MAX_HEADS = 4096;
+/** Widest single tensor dimension: hidden size, head dim, FFN intermediate. */
+const MAX_WIDTH = 262_144;
+const MAX_VOCAB = 4_194_304;
+const MAX_CTX = 134_217_728;
+const MAX_EXPERTS = 8192;
+
+/**
+ * Control and format characters, which have no business in a name that is
+ * printed to a terminal. A spec is exactly the kind of file people paste from
+ * a gist, and every string here is written into the report unescaped: an ANSI
+ * sequence in a device name can clear the screen and print a forged "FITS"
+ * line above the real verdict, and a bidi override can reorder one.
+ */
+const CONTROL_CHARACTERS = /[\p{Cc}\p{Cf}]/u;
+
 /** Thrown for every validation failure, so callers can tell bad data from bugs. */
 export class SpecValidationError extends Error {
   override readonly name = "SpecValidationError";
@@ -131,6 +159,14 @@ function str(source: Record<string, unknown>, key: string, path: string): string
   if (typeof raw !== "string" || raw.trim() === "") {
     fail(at, `must be a non-empty string, got ${describe(raw)}`);
   }
+  return text(raw, at);
+}
+
+/** A string that is safe to print. Shared by `str` and `strArray`. */
+function text(raw: string, at: string): string {
+  if (CONTROL_CHARACTERS.test(raw)) {
+    fail(at, "must not contain control characters");
+  }
   return raw;
 }
 
@@ -159,7 +195,7 @@ function strArray(source: Record<string, unknown>, key: string, path: string): s
     if (typeof entry !== "string" || entry.trim() === "") {
       fail(`${at}[${index}]`, `must be a non-empty string, got ${describe(entry)}`);
     }
-    return entry;
+    return text(entry, `${at}[${index}]`);
   });
 }
 
@@ -193,17 +229,19 @@ function nullableObject(
 function parseMla(raw: Record<string, unknown>, path: string): MlaSpec {
   const qLoraRaw = raw["qLoraRank"];
   return {
-    kvLoraRank: num(raw, "kvLoraRank", path, { integer: true, above: 0 }),
-    qkRopeHeadDim: num(raw, "qkRopeHeadDim", path, { integer: true, above: 0 }),
-    qkNopeHeadDim: num(raw, "qkNopeHeadDim", path, { integer: true, above: 0 }),
-    vHeadDim: num(raw, "vHeadDim", path, { integer: true, above: 0 }),
+    kvLoraRank: num(raw, "kvLoraRank", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    qkRopeHeadDim: num(raw, "qkRopeHeadDim", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    qkNopeHeadDim: num(raw, "qkNopeHeadDim", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    vHeadDim: num(raw, "vHeadDim", path, { integer: true, above: 0, max: MAX_WIDTH }),
     qLoraRank:
-      qLoraRaw === null ? null : num(raw, "qLoraRank", path, { integer: true, above: 0 }),
+      qLoraRaw === null
+        ? null
+        : num(raw, "qLoraRank", path, { integer: true, above: 0, max: MAX_WIDTH }),
   };
 }
 
 function parseMoe(raw: Record<string, unknown>, path: string, nLayers: number): MoeSpec {
-  const nExperts = num(raw, "nExperts", path, { integer: true, above: 0 });
+  const nExperts = num(raw, "nExperts", path, { integer: true, above: 0, max: MAX_EXPERTS });
   const expertsPerToken = num(raw, "expertsPerToken", path, { integer: true, above: 0 });
   if (expertsPerToken > nExperts) {
     fail(
@@ -222,13 +260,13 @@ function parseMoe(raw: Record<string, unknown>, path: string, nLayers: number): 
   return {
     nExperts,
     expertsPerToken,
-    expertFfnHidden: num(raw, "expertFfnHidden", path, { integer: true, above: 0 }),
-    nSharedExperts: num(raw, "nSharedExperts", path, { integer: true, min: 0 }),
+    expertFfnHidden: num(raw, "expertFfnHidden", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    nSharedExperts: num(raw, "nSharedExperts", path, { integer: true, min: 0, max: MAX_EXPERTS }),
     denseLayers,
     denseFfnHidden:
       denseFfnRaw === null || denseFfnRaw === undefined
         ? null
-        : num(raw, "denseFfnHidden", path, { integer: true, above: 0 }),
+        : num(raw, "denseFfnHidden", path, { integer: true, above: 0, max: MAX_WIDTH }),
   };
 }
 
@@ -237,10 +275,14 @@ function parseAttentionWindow(
   path: string,
 ): AttentionWindowSpec {
   return {
-    windowSize: num(raw, "windowSize", path, { integer: true, above: 0 }),
+    windowSize: num(raw, "windowSize", path, { integer: true, above: 0, max: MAX_CTX }),
     // 1 would mean "every layer is a full-attention layer", i.e. no windowing;
     // express that as attentionWindow: null instead of a degenerate block.
-    fullAttentionEvery: num(raw, "fullAttentionEvery", path, { integer: true, min: 2 }),
+    fullAttentionEvery: num(raw, "fullAttentionEvery", path, {
+      integer: true,
+      min: 2,
+      max: MAX_LAYERS,
+    }),
   };
 }
 
@@ -255,9 +297,9 @@ function parseAttentionWindow(
 export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
   const raw = object(value, path);
 
-  const nLayers = num(raw, "nLayers", path, { integer: true, above: 0 });
-  const nHeads = num(raw, "nHeads", path, { integer: true, above: 0 });
-  const nKvHeads = num(raw, "nKvHeads", path, { integer: true, above: 0 });
+  const nLayers = num(raw, "nLayers", path, { integer: true, above: 0, max: MAX_LAYERS });
+  const nHeads = num(raw, "nHeads", path, { integer: true, above: 0, max: MAX_HEADS });
+  const nKvHeads = num(raw, "nKvHeads", path, { integer: true, above: 0, max: MAX_HEADS });
   if (nKvHeads > nHeads) {
     fail(`${path}.nKvHeads`, `cannot exceed nHeads (${nHeads}), got ${nKvHeads}`);
   }
@@ -277,8 +319,8 @@ export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
     );
   }
 
-  const maxCtx = num(raw, "maxCtx", path, { integer: true, above: 0 });
-  const defaultCtx = num(raw, "defaultCtx", path, { integer: true, above: 0 });
+  const maxCtx = num(raw, "maxCtx", path, { integer: true, above: 0, max: MAX_CTX });
+  const defaultCtx = num(raw, "defaultCtx", path, { integer: true, above: 0, max: MAX_CTX });
   if (defaultCtx > maxCtx) {
     fail(`${path}.defaultCtx`, `cannot exceed maxCtx (${maxCtx}), got ${defaultCtx}`);
   }
@@ -303,12 +345,12 @@ export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
     totalParams,
     activeParams,
     nLayers,
-    hiddenSize: num(raw, "hiddenSize", path, { integer: true, above: 0 }),
+    hiddenSize: num(raw, "hiddenSize", path, { integer: true, above: 0, max: MAX_WIDTH }),
     nHeads,
     nKvHeads,
-    headDim: num(raw, "headDim", path, { integer: true, above: 0 }),
-    ffnHidden: num(raw, "ffnHidden", path, { integer: true, above: 0 }),
-    vocabSize: num(raw, "vocabSize", path, { integer: true, above: 0 }),
+    headDim: num(raw, "headDim", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    ffnHidden: num(raw, "ffnHidden", path, { integer: true, above: 0, max: MAX_WIDTH }),
+    vocabSize: num(raw, "vocabSize", path, { integer: true, above: 0, max: MAX_VOCAB }),
     tiedEmbeddings: bool(raw, "tiedEmbeddings", path),
     attention,
     mla: mlaRaw === null ? null : parseMla(mlaRaw, `${path}.mla`),
