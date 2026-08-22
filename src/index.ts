@@ -115,6 +115,17 @@ export {
 export type { Recommendation, RecommendOptions, UseCase, UseCaseProfile } from "./recommend.js";
 
 export { compareDevices, parseDeviceList } from "./compare.js";
+export { parseFleetConfig, planFleet } from "./fleet.js";
+export type {
+  FleetCell,
+  FleetConfig,
+  FleetEntry,
+  FleetMachine,
+  FleetMachineSpec,
+  FleetModelSpec,
+  FleetReport,
+  FleetRow,
+} from "./fleet.js";
 export type { DeviceCandidate, DeviceComparison } from "./compare.js";
 
 export type {
