@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/johan-becker/vramfit/blob/main/SECURITY.md
     about: Report privately to jo_becker@mailbox.org. Do not open a public issue.
   - name: Question about an estimate
-    url: https://github.com/johan-becker/vramfit/blob/main/README.md#7-accuracy-and-limitations
+    url: https://github.com/johan-becker/vramfit/blob/main/README.md#11-accuracy-and-limitations
     about: Read the accuracy and limitations section first -- the error bands and known gaps are documented there.
