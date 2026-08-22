@@ -54,6 +54,29 @@ export const LLAMA_3_1_8B: ModelSpec = {
 };
 
 /**
+ * The original LLaMA 7B: 32 query heads, 32 KV heads, 32000-token vocabulary.
+ * It is here because it is the model llama.cpp's published benchmark tables
+ * are quoted for, which makes it the one fixture with external ground truth
+ * for throughput.
+ */
+export const LLAMA_7B_MHA: ModelSpec = {
+  ...BASE,
+  id: "fixture-llama-7b",
+  name: "LLaMA 7B",
+  totalParams: 6_738_415_616,
+  activeParams: 6_738_415_616,
+  nLayers: 32,
+  hiddenSize: 4096,
+  nHeads: 32,
+  nKvHeads: 32,
+  headDim: 128,
+  ffnHidden: 11_008,
+  vocabSize: 32_000,
+  maxCtx: 4096,
+  defaultCtx: 2048,
+};
+
+/**
  * Llama 2 70B: 64 query heads and 64 KV heads -- plain multi-head attention.
  * Paired with LLAMA_3_1_70B below, which is architecturally identical except
  * for having 8 KV heads, to pin the exact 8x GQA saving.

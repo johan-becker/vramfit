@@ -60,6 +60,27 @@ export {
 } from "./quant.js";
 
 export type {
+  DecodeEstimate,
+  DecodeInput,
+  PrefillEstimate,
+  PrefillInput,
+  ThroughputEstimate,
+  ThroughputOptions,
+} from "./throughput.js";
+export {
+  DECODE_ERROR_BAND,
+  DEQUANT_EFFICIENCY,
+  MEMORY_BANDWIDTH_EFFICIENCY,
+  PREFILL_ERROR_BAND,
+  PREFILL_MFU,
+  bandwidthEfficiency,
+  estimateDecodeFrom,
+  estimatePrefillFrom,
+  estimateThroughput,
+  prefillFlopsPerToken,
+} from "./throughput.js";
+
+export type {
   AttentionKind,
   AttentionWindowSpec,
   DeviceFamily,
