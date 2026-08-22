@@ -42,6 +42,7 @@ const VALUELESS_FLAGS: ReadonlySet<string> = new Set([
   "markdown",
   "explain",
   "ngl",
+  "color",
 ]);
 
 type FlagValue = string | boolean;

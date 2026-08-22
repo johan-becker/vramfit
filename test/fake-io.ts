@@ -14,6 +14,10 @@ export interface FakeIoContents {
   text?: Record<string, string>;
   binary?: Record<string, Uint8Array>;
   directories?: readonly string[];
+  /** Whether the command should believe it is writing to a terminal. */
+  isTty?: boolean;
+  /** The environment the colour rules read. */
+  env?: Record<string, string>;
 }
 
 export class FakeIo implements Io {
@@ -23,11 +27,19 @@ export class FakeIo implements Io {
   private readonly text: Map<string, string>;
   private readonly binary: Map<string, Uint8Array>;
   private readonly directories: Set<string>;
+  private readonly environment: Record<string, string>;
+  readonly isTty: boolean;
 
   constructor(contents: FakeIoContents = {}) {
     this.text = new Map(Object.entries(contents.text ?? {}));
     this.binary = new Map(Object.entries(contents.binary ?? {}));
     this.directories = new Set(contents.directories ?? []);
+    this.environment = contents.env ?? {};
+    this.isTty = contents.isTty ?? false;
+  }
+
+  env(name: string): string | undefined {
+    return this.environment[name];
   }
 
   out(text: string): void {

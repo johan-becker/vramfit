@@ -32,10 +32,17 @@ if (!existsSync(bin)) {
  * @property {string[]} argv
  * @property {number} exit
  * @property {RegExp[]} [expect]
+ * @property {RegExp[]} [reject]
  * @property {RegExp[]} [expectStderr]
  * @property {RegExp[]} [rejectStderr]
  * @property {(payload: any) => void} [json]
  */
+
+/**
+ * An ANSI control sequence, built rather than written as a literal so the
+ * file itself stays free of control characters.
+ */
+const ANSI_ESCAPE = new RegExp(`${String.fromCodePoint(27)}\\[`);
 
 /** @type {SmokeCase[]} */
 const cases = [
@@ -89,6 +96,63 @@ const cases = [
     exit: 1,
     expect: [/Nothing in this range fits/],
   },
+  {
+    name: "compare",
+    argv: ["compare", "llama-3.3-70b", "--devices", "4090,4090x2,a100-80", "--ctx", "8k"],
+    exit: 0,
+    expect: [/^->\s+NVIDIA A100 80GB/m, /Best: NVIDIA A100 80GB/],
+  },
+  {
+    name: "recommend",
+    argv: ["recommend", "-d", "4090", "--use-case", "code", "--limit", "3"],
+    exit: 0,
+    expect: [/\| {2}code {2}\|/, /tok\/s code wants/, /does not rank models/],
+  },
+  {
+    // The memory bar is non-ASCII, and this is the check that it survives
+    // being written to a pipe by the real binary on every supported platform.
+    name: "memory bar",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"],
+    exit: 0,
+    expect: [/█ weights 4\.62 {3}▓ KV 1\.00/],
+  },
+  {
+    // Piped output must never carry escape sequences.
+    name: "no colour in a pipe",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"],
+    exit: 0,
+    reject: [ANSI_ESCAPE],
+  },
+  {
+    name: "launcher flags",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--launcher", "llama.cpp"],
+    exit: 0,
+    expect: [/^ {4}llama-server -m <model\.gguf> -ngl 33 -c 8192 -fa on$/m],
+  },
+  {
+    name: "--ngl prints one number",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--ngl"],
+    exit: 0,
+    expect: [/^33\n$/],
+  },
+  {
+    name: "--explain",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--explain"],
+    exit: 0,
+    expect: [/Weights = parameters x bits per weight \/ 8/, /2 x 32 x 8 x 128 x 8192 x 1 x 2/],
+  },
+  {
+    name: "--markdown",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--ctx", "8k", "--markdown"],
+    exit: 0,
+    expect: [/^\| --- \| ---: \| --- \|$/m, /^\*\*FITS\*\* — /m],
+  },
+  {
+    name: "--json and --markdown are refused together",
+    argv: ["check", "llama-3.1-8b", "-d", "4090", "--json", "--markdown"],
+    exit: 2,
+    expectStderr: [/two different outputs; pick one/],
+  },
   { name: "devices", argv: ["devices"], exit: 0, expect: [/^rtx-4090\s+NVIDIA RTX 4090/m] },
   { name: "models", argv: ["models"], exit: 0, expect: [/^llama-3\.1-8b/m] },
   { name: "help", argv: ["--help"], exit: 0, expect: [/USAGE/] },
@@ -139,6 +203,9 @@ for (const testCase of cases) {
   }
   for (const pattern of testCase.expect ?? []) {
     if (!pattern.test(result.stdout)) problems.push(`stdout did not match ${pattern}`);
+  }
+  for (const pattern of testCase.reject ?? []) {
+    if (pattern.test(result.stdout)) problems.push(`stdout matched ${pattern}, which it must not`);
   }
   for (const pattern of testCase.expectStderr ?? []) {
     if (!pattern.test(result.stderr)) problems.push(`stderr did not match ${pattern}`);
