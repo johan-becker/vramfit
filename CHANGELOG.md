@@ -59,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the output head. Little-endian GGUF v2 and v3, every metadata value type
   including nested arrays. `--gguf <path>` for a file that is not named
   `.gguf`; `model.origin` and `model.from` in the JSON payload.
+- **`vramfit compare <model> --devices 4090,3090x2,m4-max`** — one model
+  across several devices in one ranked table: fits, headroom, largest context
+  and decode speed, what fits first and fastest first within that, with the
+  rows that do not fit ordered by how close they came.
+- **`vramfit recommend --device <d> [--use-case chat|code|long-context]`** —
+  every bundled model that fits, ranked by `capability x quality x speed` with
+  all three factors exposed in the JSON, and each row explained in a sentence.
+  The use case sets the context to check at and the decode bar to clear, and
+  nothing else: vramfit has no benchmark data and does not rank models by how
+  good they are at anything.
+- **`vramfit fleet --config fleet.json`** — heterogeneous machines against a
+  list of models, one row per model and one column per machine, exiting 1 when
+  any model fits nowhere. Model entries may be bundled names or paths.
 - **`vramfit check ./checkpoint/`** — read a HuggingFace `config.json` from a
   local path, with `--hf-config <path>` for one named directly. Maps every
   spelling the ecosystem uses for the same field (`num_local_experts` /

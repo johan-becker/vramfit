@@ -51,6 +51,9 @@ keeps the test files and build scripts honest.
 | `src/throughput.ts` | Bandwidth-bound decode, compute-bound prefill, efficiency tables |
 | `src/offload.ts` | llama.cpp-style layer placement and blended bandwidth |
 | `src/fit.ts` | Composes the above into a verdict, max context and quant recommendation |
+| `src/compare.ts` | One model across several devices, and the ordering that makes it a table |
+| `src/recommend.ts` | The capability x quality x speed ranking, and the use-case profiles |
+| `src/fleet.ts` | The fleet file format and the machine-by-model placement matrix |
 | `src/db/` | The bundled registry and the validator that every spec goes through |
 | `src/gguf/` | Streaming GGUF header reader, and the mapping onto a `ModelSpec` and a `QuantSpec` |
 | `src/hf/` | HuggingFace `config.json` mapping, and the safetensors headers that give the parameter count |

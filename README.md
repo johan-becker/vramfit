@@ -318,6 +318,9 @@ Notes
 | --- | --- | --- |
 | `vramfit check <model> --device <d>` | Full report for one model, quant, context and device | 0 fits / 1 does not / 2 usage |
 | `vramfit best <model> --device <d>` | Every quantization ranked by quality, with max context and decode speed | 0 something fits / 1 nothing in the range fits at this context / 2 usage |
+| `vramfit compare <model> --devices <list>` | One model on several devices, best first | 0 something fits / 1 nothing does / 2 usage |
+| `vramfit recommend --device <d>` | Every bundled model that fits, ranked, each with its trade-off | 0 something fits / 1 nothing does / 2 usage |
+| `vramfit fleet --config <file>` | Which of several machines can serve which of several models | 0 every model placed / 1 one fits nowhere / 2 usage |
 | `vramfit devices` | List the 29 bundled devices | 0 / 2 |
 | `vramfit models` | List the 24 bundled models | 0 / 2 |
 
@@ -331,6 +334,10 @@ HuggingFace checkpoint directory. Both are read from their own headers.
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
 | `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
 | `--hf-config <path>` | Read the model from a HuggingFace `config.json`; a safetensors index beside it gives the true parameter count |
+| `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max` |
+| `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
+| `--limit <n>` | `recommend` only: show the top n |
+| `--config <path>` | `fleet` only: the JSON description of the machines and the models |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
@@ -386,6 +393,17 @@ keep their name and meaning.
 | `throughput` | `decodeTokensPerSecond`, `aggregateDecodeTokensPerSecond`, `prefillTokensPerSecond`, `promptTokens`, `timeToFirstTokenSeconds`, `decodeErrorBand`, `prefillErrorBand` |
 | `offload` | `null` when the model is fully resident, otherwise `gpuLayers`, `cpuLayers`, `vocabOnDevice`, `systemRamRequiredBytes`, `systemRamAvailableBytes`, `feasible`, `blendedBandwidthBytesPerSecond` |
 | `warnings` | The strings the report prints under *Notes* |
+
+`vramfit compare --json` returns `vramfit`, `model`, `config`, `best` (a
+device id or `null`) and `devices[]` in the table's own order, each with
+`capacityBytes`, `totalBytes`, `headroomBytes`, `utilization`, `fits`,
+`maxContext`, `decodeTokensPerSecond`, `offloadFeasible` and `best`.
+`recommend --json` returns `device`, `useCase` (`id`, `ctx`,
+`comfortableDecodeTokensPerSecond`) and `models[]` with the three ranking
+factors — `capability`, `quality`, `speed` — beside the `score` they multiply
+to, so the ranking can be recomputed or argued with. `fleet --json` returns
+`machines[]` and `models[]`, each model carrying `servedBy` and one entry per
+machine.
 
 `vramfit best --json` returns `vramfit`, `model`, `device`, `ctx`,
 `recommended` (a quant id or `null`) and `quants[]`, one entry per candidate
@@ -546,6 +564,136 @@ top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
 an MXFP4 checkpoint is twice the bytes for weights that were never wider than
 4.25 bits.
 
+### 6.7 Beyond one model on one device
+
+Three commands for the questions that need more than one `check`.
+
+**`compare`** — one model, every device you might use, ranked. What fits comes
+before what does not, then fastest first, because once a configuration fits,
+decode speed is what you actually feel. `4090x2` means two of them.
+
+```console
+$ vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra,3090x2 --ctx 8k
+Llama 3.3 70B  |  Q4_K_M  |  8K context
+=======================================
+
+    Device                   Memory     Needed        Free  Fits  Max ctx      Decode
+--  -------------------  ----------  ---------  ----------  ----  -------  ----------
+->  NVIDIA A100 80GB      80.00 GiB  43.69 GiB   36.31 GiB   yes   124.1K  33.2 tok/s
+    2 x NVIDIA RTX 4090   48.00 GiB  44.39 GiB    3.61 GiB   yes    19.5K  13.4 tok/s
+    2 x NVIDIA RTX 3090   48.00 GiB  44.39 GiB    3.61 GiB   yes    19.5K  12.4 tok/s
+    Apple M3 Ultra       384.00 GiB  43.19 GiB  340.81 GiB   yes     128K  8.27 tok/s
+    NVIDIA RTX 4090       24.00 GiB  43.39 GiB  -19.39 GiB    no        -  2.06 tok/s
+
+Rows that do not fit show the decode speed with as many layers as possible
+offloaded to system RAM, which is what you would actually get.
+
+Best: NVIDIA A100 80GB -- 33.2 tok/s at 8K with 36.31 GiB to spare, and room
+for 124.1K of context.
+```
+
+Two 4090s hold the model and decode at 13.4 tok/s; one A100 holds it and
+decodes 2.5x faster, because a layer split does not raise decode speed. The
+M3 Ultra has 340 GiB spare and is the slowest thing in the table that fits.
+Neither of those is obvious from a spec sheet.
+
+**`recommend`** — the inverse question, and the one people actually arrive
+with. Ranked by
+
+```
+score = capability x quality x speed
+```
+
+where *capability* is `log10` of the parameter count (scaling laws are
+logarithmic — a 70B is one unit above a 7B, not ten times it), with a mixture
+of experts entering as the geometric mean of total and active parameters;
+*quality* is 1.0 for `Q4_K_M` and above and falls off below it; and *speed* is
+decode against a bar the use case sets, capped at 1 — which is what stops the
+ranking from simply naming the largest model that technically fits.
+
+```console
+$ vramfit recommend -d 4090 --use-case chat --limit 3
+NVIDIA RTX 4090  |  chat  |  8K context
+=======================================
+
+ #  Model        Params  Quant       Total  Max ctx      Decode
+--  -----------  ------  ------  ---------  -------  ----------
+1.  Qwen2.5 32B  32.76B  Q4_K_M  21.53 GiB    17.8K  27.8 tok/s
+    32.76B parameters at Q4_K_M, the best quality-per-byte in the GGUF lineup,
+    and 27.8 tok/s, comfortably above the 15 tok/s chat wants.
+
+2.  Qwen3 32B    32.76B  Q4_K_M  21.51 GiB    17.9K  27.8 tok/s
+    32.76B parameters at Q4_K_M, the best quality-per-byte in the GGUF lineup,
+    and 27.8 tok/s, comfortably above the 15 tok/s chat wants.
+
+3.  Gemma 2 27B  27.23B  Q6_K    23.94 GiB       8K  25.4 tok/s
+    27.23B parameters at Q6_K, which is effectively lossless, and 25.4 tok/s,
+    comfortably above the 15 tok/s chat wants.
+...
+```
+
+`--use-case` sets two numbers and nothing else: the context to check at and
+the decode speed to clear. `chat` is 8K and 15 tok/s, because reading speed is
+10–15 tokens a second; `code` is 16K and 30 tok/s, because a completion is
+hundreds of tokens you wait for in full; `long-context` is 32K and 8 tok/s,
+because summarising is dominated by prefill. **vramfit has no benchmark data
+and does not rank models by how good they are at anything** — the report says
+so, on the page, every time.
+
+**`fleet`** — heterogeneous machines against a list of models, from a file:
+
+```json
+{
+  "ctx": 8192,
+  "quant": "q4_k_m",
+  "machines": [
+    { "name": "workstation", "device": "4090", "gpus": 2, "ram": 128 },
+    { "name": "laptop", "device": "m3-max", "ram": 128 },
+    { "name": "rack", "device": "a100-80", "ram": 512 },
+    { "name": "old-box", "device": "rtx-3060-12gb", "ram": 32 }
+  ],
+  "models": [
+    "llama-3.1-8b",
+    "qwen2.5-32b",
+    "llama-3.3-70b",
+    { "model": "gemma-3-27b", "ctx": 4096 },
+    "qwen3-235b-a22b"
+  ]
+}
+```
+
+```console
+$ vramfit fleet --config ./fleet.json
+Fleet  |  4 machines  |  5 models
+=================================
+
+Model            Quant   Ctx  Weights+KV  workstation      laptop        rack     old-box  Served
+---------------  ------  ---  ----------  -----------  ----------  ----------  ----------  ------
+Llama 3.1 8B     Q4_K_M   8K    5.62 GiB    105 tok/s  31.8 tok/s   261 tok/s  37.6 tok/s     4/4
+Qwen2.5 32B      Q4_K_M   8K   20.58 GiB   27.8 tok/s  8.38 tok/s  69.0 tok/s           -     3/4
+Llama 3.3 70B    Q4_K_M   8K   42.38 GiB   13.4 tok/s  4.04 tok/s  33.2 tok/s           -     3/4
+Gemma 3 27B      Q4_K_M   4K   16.19 GiB   34.7 tok/s  10.5 tok/s  85.9 tok/s           -     3/4
+Qwen3 235B-A22B  Q4_K_M   8K  133.78 GiB            -           -           -           -     0/4
+
+Machines
+  Name         Device                Usable  System RAM
+  -----------  --------------------  ------  ----------
+  workstation  2 x NVIDIA RTX 4090   48 GiB     128 GiB
+  laptop       Apple M3 Max          96 GiB     128 GiB
+  rack         NVIDIA A100 80GB      80 GiB     512 GiB
+  old-box      NVIDIA RTX 3060 12GB  12 GiB      32 GiB
+
+1 of 5 models fit nowhere: Qwen3 235B-A22B. Run "vramfit check" against the
+largest machine to see what a partial offload or a narrower quantization would
+cost.
+```
+
+The cell is a decode figure rather than a tick, because "yes" and "yes at
+4 tok/s" are different answers and the second one is usually a no. A model
+entry is a name or a path, so a fleet file can mix the bundled database with
+the checkpoints actually sitting on those machines. `fleet` exits **1** when
+any model fits nowhere, which is what makes it useful in CI.
+
 ## 7. Accuracy and limitations
 
 - Memory figures are **arithmetic**, and only as good as their inputs. Weight
@@ -580,7 +728,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 361 tests across 18 files
+npm test           # vitest -- 405 tests across 21 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 
