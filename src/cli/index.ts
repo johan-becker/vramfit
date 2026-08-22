@@ -292,30 +292,30 @@ function runList(args: Args, io: Io, kind: "devices" | "models"): number {
   return EXIT_OK;
 }
 
-/** Parse, dispatch, and turn any failure into a usage message and exit code. */
+/**
+ * Parse, dispatch, and turn any failure into a usage message and exit code.
+ *
+ * Everything after `readVersion` is inside the one try/catch, including the
+ * --version and --help reads: `args.boolean` throws on a value it cannot make
+ * sense of, and an escaped throw would leave Node to print a stack trace and
+ * exit 1 -- the code that means "does not fit" to a deploy gate.
+ */
 export function run(argv: readonly string[], io: Io = defaultIo): number {
   const version = readVersion();
-  let args: Args;
-  try {
-    args = Args.parse(argv);
-  } catch (error) {
-    io.err(`vramfit: ${(error as Error).message}`);
-    io.err('Try "vramfit --help".');
-    return EXIT_USAGE;
-  }
-
-  const command = args.positionals[0];
-
-  if (args.boolean("version") === true && command === undefined) {
-    io.out(version);
-    return EXIT_OK;
-  }
-  if (command === undefined || command === "help" || args.boolean("help") === true) {
-    io.out(HELP);
-    return command === undefined && args.boolean("help") !== true ? EXIT_USAGE : EXIT_OK;
-  }
 
   try {
+    const args = Args.parse(argv);
+    const command = args.positionals[0];
+
+    if (args.boolean("version") === true && command === undefined) {
+      io.out(version);
+      return EXIT_OK;
+    }
+    if (command === undefined || command === "help" || args.boolean("help") === true) {
+      io.out(HELP);
+      return command === undefined && args.boolean("help") !== true ? EXIT_USAGE : EXIT_OK;
+    }
+
     switch (command) {
       case "check":
         return runCheck(args, io, version);
