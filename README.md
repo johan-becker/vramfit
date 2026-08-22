@@ -359,10 +359,12 @@ Effective bits per weight, before the embedding and output-head promotions:
 ### 6.4 JSON output
 
 `--json` writes one object to stdout and nothing else, so it pipes straight
-into `jq`. Every quantity is in base units: bytes for memory, decimal bytes per
-second for bandwidth, tokens per second for rates, seconds for durations,
-tokens for context and prompt lengths. GiB appear only in the human report.
-Keys are added over time, but the ones below keep their name and meaning.
+into `jq`. Every computed quantity is in base units: bytes for memory, decimal
+bytes per second for bandwidth, tokens per second for rates, seconds for
+durations, tokens for context and prompt lengths — GiB appear only in the human
+report. The `device` block is the stored spec, where the field name carries the
+unit (`vramGiB`, `bandwidthGBs`). Keys are added over time, but the ones below
+keep their name and meaning.
 
 `vramfit check --json`:
 
