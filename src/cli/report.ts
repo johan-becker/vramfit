@@ -6,6 +6,8 @@ import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { GIB, bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
+import { renderMemoryBar } from "./bar.js";
+import { PLAIN_PALETTE, type Palette } from "./color.js";
 import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
@@ -38,6 +40,8 @@ export interface ReportOptions {
   source?: ResolvedModel;
   /** The launch flags to print, and which runtimes to print them for. */
   launcher?: { plan: LauncherPlan; runtime: LauncherRuntime };
+  /** Colour, when the output is going somewhere that can show it. */
+  palette?: Palette;
 }
 
 /**
@@ -113,13 +117,13 @@ function memoryPairs(fit: FitResult): Pair[] {
   return pairs;
 }
 
-function verdictLine(fit: FitResult): string {
+function verdictLine(fit: FitResult, palette: Palette): string {
   const used = formatBytes(fit.usedBytes);
   const available = formatBytes(fit.capacity.totalBytes);
   if (fit.fits) {
-    return `FITS  -  ${used} of ${available} used, ${formatBytes(fit.headroomBytes)} free (${formatPercent(fit.utilization)} utilised)`;
+    return `${palette.paint("good", "FITS")}  -  ${used} of ${available} used, ${formatBytes(fit.headroomBytes)} free (${formatPercent(fit.utilization)} utilised)`;
   }
-  return `DOES NOT FIT  -  ${used} needed, ${available} available, ${formatBytes(-fit.headroomBytes)} short`;
+  return `${palette.paint("bad", "DOES NOT FIT")}  -  ${used} needed, ${available} available, ${formatBytes(-fit.headroomBytes)} short`;
 }
 
 function speedPairs(fit: FitResult): Pair[] {
@@ -188,8 +192,22 @@ export function renderCheck(
     fit.gpus > 1 ? `${fit.gpus} x ${fit.device.name}` : fit.device.name,
   ].join("  |  ");
 
-  lines.push(heading, "=".repeat(heading.length), "", ...sourceLines(options), verdictLine(fit), "");
-  lines.push("Memory", ...renderPairs(memoryPairs(fit)), "");
+  const palette = options.palette ?? PLAIN_PALETTE;
+  lines.push(
+    heading,
+    "=".repeat(heading.length),
+    "",
+    ...sourceLines(options),
+    verdictLine(fit, palette),
+    "",
+  );
+  lines.push(
+    "Memory",
+    ...renderPairs(memoryPairs(fit)),
+    "",
+    ...renderMemoryBar(fit, palette),
+    "",
+  );
 
   lines.push(
     "Capacity",
