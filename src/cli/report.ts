@@ -1,9 +1,10 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
+import type { FleetMachine, FleetReport } from "../fleet.js";
 import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
-import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
+import { GIB, bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
@@ -698,6 +699,133 @@ export function recommendJson(
       quality: row.quality,
       speed: row.speed,
       tradeoff: row.tradeoff,
+    })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* fleet                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** How a machine is described in the legend under the fleet table. */
+function machineLegend(machine: FleetMachine): string[] {
+  const device = machine.gpus > 1 ? `${machine.gpus} x ${machine.device.name}` : machine.device.name;
+  const capacity =
+    (machine.options.vramGiB ?? machine.device.vramGiB * machine.device.usableFraction) *
+    machine.gpus;
+  return [
+    machine.name,
+    device,
+    `${capacity.toFixed(capacity < 10 ? 1 : 0)} GiB`,
+    machine.options.systemRamGiB === undefined
+      ? "-"
+      : `${machine.options.systemRamGiB.toFixed(0)} GiB`,
+  ];
+}
+
+/**
+ * The `vramfit fleet` matrix: one row per model, one column per machine.
+ *
+ * The cell is the decode speed rather than a tick, because "yes" and "yes at
+ * 3 tok/s" are different answers and the second one is usually a no.
+ */
+export function renderFleet(report: FleetReport): string[] {
+  const columns = [
+    { header: "Model" },
+    { header: "Quant" },
+    { header: "Ctx", align: "right" as const },
+    { header: "Weights+KV", align: "right" as const },
+    ...report.machines.map((machine) => ({ header: machine.name, align: "right" as const })),
+    { header: "Served", align: "right" as const },
+  ];
+
+  const rows = report.rows.map((row) => [
+    row.entry.label,
+    row.entry.quant.label,
+    formatContext(row.entry.ctx),
+    // Weights and cache are the same on every machine; the runtime context
+    // and compute buffer are charged per device and so differ between them.
+    // Showing one machine's total in a shared column would misreport the rest.
+    formatBytes(
+      (row.cells[0]?.fit.footprint.weights.totalBytes ?? 0) +
+        (row.cells[0]?.fit.footprint.kv.totalBytes ?? 0),
+    ),
+    ...row.cells.map((cell) => (cell.fit.fits ? formatRate(cell.fit.throughput.decode.tokensPerSecond) : "-")),
+    `${row.servedBy}/${report.machines.length}`,
+  ]);
+
+  const heading = `Fleet  |  ${report.machines.length} machines  |  ${report.rows.length} models`;
+  const lines = [heading, "=".repeat(heading.length), "", ...renderTable(columns, rows), ""];
+
+  lines.push(
+    "Machines",
+    ...renderTable(
+      [
+        { header: "Name" },
+        { header: "Device" },
+        { header: "Usable", align: "right" },
+        { header: "System RAM", align: "right" },
+      ],
+      report.machines.map(machineLegend),
+    ).map((line) => `  ${line}`.trimEnd()),
+    "",
+  );
+
+  if (report.unserved.length > 0) {
+    lines.push(
+      ...wrap(
+        `${report.unserved.length} of ${report.rows.length} models fit nowhere: ${report.unserved.map((row) => row.entry.label).join(", ")}. Run "vramfit check" against the largest machine to see what a partial offload or a narrower quantization would cost.`,
+        WRAP_WIDTH,
+      ),
+      "",
+    );
+  }
+  if (report.idle.length > 0) {
+    lines.push(
+      ...wrap(
+        `${report.idle.map((machine) => machine.name).join(", ")} ${report.idle.length === 1 ? "serves" : "serve"} nothing on this list.`,
+        WRAP_WIDTH,
+      ),
+      "",
+    );
+  }
+
+  lines.push(
+    ...wrap(
+      "A dash means the model does not fit in that machine's device memory. Weights+KV is what every machine holds in common; each also pays its own runtime context and compute buffer, once per device. Decode figures are estimates, +/-25%.",
+      WRAP_WIDTH,
+    ),
+  );
+  return lines;
+}
+
+/** The `vramfit fleet --json` payload. */
+export function fleetJson(report: FleetReport, version: string): unknown {
+  return {
+    vramfit: version,
+    machines: report.machines.map((machine) => ({
+      name: machine.name,
+      device: machine.device.id,
+      count: machine.gpus,
+      capacityBytes:
+        (machine.options.vramGiB ?? machine.device.vramGiB * machine.device.usableFraction) *
+        machine.gpus *
+        GIB,
+    })),
+    models: report.rows.map((row) => ({
+      label: row.entry.label,
+      id: row.entry.model.id,
+      quant: row.entry.quant.id,
+      ctx: row.entry.ctx,
+      servedBy: row.servedBy,
+      machines: row.cells.map((cell) => ({
+        name: cell.machine.name,
+        fits: cell.fit.fits,
+        totalBytes: cell.fit.usedBytes,
+        headroomBytes: cell.fit.headroomBytes,
+        maxContext: cell.fit.maxContext,
+        decodeTokensPerSecond: cell.fit.throughput.decode.tokensPerSecond,
+      })),
     })),
   };
 }

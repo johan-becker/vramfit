@@ -2,6 +2,12 @@ import { readFileSync, statSync } from "node:fs";
 import { getDevice, getModel, listDevices, listModels, parseDeviceSpec, parseModelSpec } from "../db/index.js";
 import { compareDevices, parseDeviceList, type DeviceCandidate } from "../compare.js";
 import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
+import {
+  parseFleetConfig,
+  planFleet,
+  type FleetEntry,
+  type FleetMachine,
+} from "../fleet.js";
 import { openByteSource } from "../gguf/index.js";
 import { getQuant } from "../quant.js";
 import {
@@ -27,11 +33,13 @@ import {
   bestJson,
   checkJson,
   compareJson,
+  fleetJson,
   recommendJson,
   renderBest,
   renderCheck,
   renderCompare,
   renderDevices,
+  renderFleet,
   renderModels,
   renderRecommend,
 } from "./report.js";
@@ -102,6 +110,7 @@ USAGE
   vramfit best  <model> --device <device> [options]
   vramfit compare <model> --devices <list> [options]
   vramfit recommend --device <device> [options]
+  vramfit fleet --config <fleet.json> [options]
   vramfit devices [--json]
   vramfit models  [--json]
 
@@ -114,6 +123,8 @@ COMMANDS
             context and decode speed, best first.
   recommend What to run on the hardware you have: every bundled model that
             fits, ranked, each with the trade-off it asks of you.
+  fleet     Which of several machines can serve which of several models,
+            from a JSON description of the hardware you have.
   devices   List the bundled devices.
   models    List the bundled models.
 
@@ -160,6 +171,11 @@ CALIBRATION (device side only; offloaded layers keep their derived figures)
       --efficiency <0-1>       Override the memory-bandwidth efficiency.
       --prefill-efficiency <0-1>  Override the prefill MFU.
 
+FLEET
+      --config <path>      JSON: { machines: [{ name, device, gpus, vram,
+                           ram }], models: [...], ctx, quant }. A model entry
+                           is a name, a path, or { model, quant, ctx }.
+
 RECOMMEND
       --use-case <id>      chat, code or long-context. Sets the context to
                            check at and the decode speed to clear (default
@@ -177,6 +193,7 @@ EXAMPLES
   vramfit best qwen2.5-32b --device m3-max
   vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra
   vramfit recommend -d m4-max --use-case code
+  vramfit fleet --config ./fleet.json
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
   vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
@@ -433,6 +450,72 @@ function runRecommend(args: Args, io: Io, version: string): number {
   return rows.length > 0 ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }
 
+/**
+ * Resolve one model entry of a fleet file.
+ *
+ * The entry is whatever `check` would accept in the same position -- a bundled
+ * name or a path -- so a fleet file can mix the database with the checkpoints
+ * actually sitting on the machines it describes.
+ */
+function resolveFleetEntry(
+  io: Io,
+  entry: { model: string; quant: string | undefined; ctx: number | undefined },
+  defaults: { quant: string | undefined; ctx: number | undefined },
+): FleetEntry {
+  const source = looksLikePath(entry.model)
+    ? resolvePath(io, entry.model)
+    : { model: getModel(entry.model), origin: "database" as const, from: entry.model };
+
+  const requested = entry.quant ?? defaults.quant;
+  const quant =
+    requested !== undefined
+      ? getQuant(requested)
+      : (source.quant ?? getQuant(source.model.nativeQuant ?? "q4_k_m"));
+
+  return {
+    label: source.origin === "database" ? source.model.name : entry.model,
+    model: source.model,
+    quant,
+    ctx: entry.ctx ?? defaults.ctx ?? source.model.defaultCtx,
+  };
+}
+
+function runFleet(args: Args, io: Io, version: string): number {
+  args.assertKnown(["config", "json", "help"]);
+  assertNoExtraArguments(args, "fleet", 1);
+
+  const path = args.string("config");
+  if (path === undefined) {
+    throw new UsageError(
+      "--config is required: a JSON file describing the machines and the models to place on them.",
+    );
+  }
+  const config = loadJsonFile(io, path, parseFleetConfig);
+
+  const machines: FleetMachine[] = config.machines.map((machine) => {
+    const options: FitOptions = { gpus: machine.gpus };
+    if (machine.vramGiB !== undefined) options.vramGiB = machine.vramGiB;
+    if (machine.systemRamGiB !== undefined) options.systemRamGiB = machine.systemRamGiB;
+    if (config.kvQuant !== undefined) options.kvQuant = config.kvQuant;
+    if (config.batch !== undefined) options.batch = config.batch;
+    return { name: machine.name, device: getDevice(machine.device), gpus: machine.gpus, options };
+  });
+
+  const entries = config.models.map((entry) =>
+    resolveFleetEntry(io, entry, { quant: config.quant, ctx: config.ctx }),
+  );
+  const report = planFleet(machines, entries);
+
+  if (args.boolean("json") === true) {
+    emitJson(io, fleetJson(report, version));
+  } else {
+    emit(io, renderFleet(report));
+  }
+  // Every model placed somewhere is the green case; anything homeless is the
+  // one a deploy script wants to hear about.
+  return report.unserved.length === 0 ? EXIT_OK : EXIT_DOES_NOT_FIT;
+}
+
 function runBest(args: Args, io: Io, version: string): number {
   args.assertKnown(SHARED_FLAGS);
   assertNoExtraArguments(args, "best", 2);
@@ -501,6 +584,8 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return runCompare(args, io, version);
       case "recommend":
         return runRecommend(args, io, version);
+      case "fleet":
+        return runFleet(args, io, version);
       case "devices":
         return runList(args, io, "devices");
       case "models":
@@ -510,7 +595,7 @@ export function run(argv: readonly string[], io: Io = defaultIo): number {
         return EXIT_OK;
       default:
         throw new UsageError(
-          `Unknown command "${command}". Expected check, best, compare, recommend, devices, models or help.`,
+          `Unknown command "${command}". Expected check, best, compare, recommend, fleet, devices, models or help.`,
         );
     }
   } catch (error) {
