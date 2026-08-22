@@ -1,6 +1,6 @@
 {
   "name": "vramfit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Will this model run on my machine, and how fast? VRAM, KV-cache and throughput arithmetic for local LLM inference.",
   "keywords": [
     "llm",
@@ -8,6 +8,9 @@
     "kv-cache",
     "quantization",
     "gguf",
+    "safetensors",
+    "huggingface",
+    "moe",
     "llama.cpp",
     "gpu",
     "capacity-planning"

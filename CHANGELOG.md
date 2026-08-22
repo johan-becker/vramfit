@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-22
+
+The question was "will this model fit on this device". This release answers it
+for the checkpoint you already have -- a GGUF file or a HuggingFace directory,
+read from its own header -- and answers the three questions that follow it:
+which of my machines should run this, what should I run on the machine I have,
+and what exactly do I type to start it.
+
+### Added
+
+- **`vramfit check ./model.gguf`** — read a real checkpoint instead of the
+  bundled database. The streaming header reader pulls one window at a time and
+  skips what it does not need, so a 40 GB file costs a few hundred kilobytes
+  of reads; the model's shape, attention flavour (GQA, MLA, sliding window)
+  and expert geometry come from the metadata, the parameter count is summed
+  from the shape table, and the bits per weight are measured from the ggml
+  type of every tensor — separately for the blocks, the embedding table and
+  the output head. Little-endian GGUF v2 and v3, every metadata value type
+  including nested arrays. `--gguf <path>` for a file that is not named
+  `.gguf`; `model.origin` and `model.from` in the JSON payload.
+- **`vramfit check ./checkpoint/`** — read a HuggingFace `config.json` from a
+  local path, with `--hf-config <path>` for one named directly. Maps every
+  spelling the ecosystem uses for the same field (`num_local_experts` /
+  `num_experts` / `n_routed_experts`, a shared-expert count or a combined
+  width, `sliding_window` with and without `use_sliding_window`), descends
+  into `text_config` for multimodal releases, and takes the true parameter
+  count from a safetensors index or a single-file safetensors header beside
+  it. A count that cannot be reconciled with the decoder the config describes
+  is reported under *Notes* rather than charged to it.
+- **`vramfit compare <model> --devices 4090,3090x2,m4-max`** — one model
+  across several devices in one ranked table: fits, headroom, largest context
+  and decode speed, what fits first and fastest first within that, with the
+  rows that do not fit ordered by how close they came.
+- **`vramfit recommend --device <d> [--use-case chat|code|long-context]`** —
+  every bundled model that fits, ranked by `capability x quality x speed` with
+  all three factors exposed in the JSON, and each row explained in a sentence.
+  The use case sets the context to check at and the decode bar to clear, and
+  nothing else: vramfit has no benchmark data and does not rank models by how
+  good they are at anything.
+- **`vramfit fleet --config fleet.json`** — heterogeneous machines against a
+  list of models, one row per model and one column per machine, exiting 1 when
+  any model fits nowhere. Model entries may be bundled names or paths.
+- **`--launcher` and `--ngl` on `check`** — the exact flags a fit implies, for
+  llama.cpp (`-ngl`, `-c`, `-fa`, `--cache-type-k/-v`, `--parallel`), Ollama
+  (`num_gpu`, `num_ctx`, and the environment variables it keeps them in) and
+  vLLM (`--gpu-memory-utilization` computed from the footprint over installed
+  memory, `--max-model-len`, `--tensor-parallel-size`, `--kv-cache-dtype`).
+  `--ngl` prints the layer count alone, for a shell substitution.
+- **A memory-breakdown bar** under `check`'s memory table — weights, cache,
+  overhead and free, each with its own block character as well as its own
+  colour, so it reads with colour stripped. ANSI is emitted only for a
+  terminal that wants it: `--color` / `--no-color`, then `NO_COLOR`, then
+  `FORCE_COLOR`, then `TERM`, then whether stdout is a TTY.
+- **`--explain`** — every headline figure with the formula and the numbers
+  that produced it, switching KV formula with the model's attention flavour.
+- **`--markdown`** on every command, for pasting into an issue. The cells are
+  shared with the terminal renderer so the two cannot drift; the bar, the
+  launch flags and the `--explain` block go inside fences, the last folded
+  into a `<details>`. Refused together with `--json`.
+- `nativeQuant` on `ModelSpec`: a model released in a quantization of its own
+  is checked in that format by default and ranked by it in `best`, and wider
+  requantizations of it are left out. Both gpt-oss entries declare MXFP4, which
+  the recommender previously ignored in favour of a Q8_0 twice its size.
+- The smoke test covers the new commands and formats against the built
+  binary, including that a pipe receives no escape sequences and that the
+  memory bar's block characters survive on every supported platform.
+- 464 tests across 23 files, up from 242 across 12. The GGUF and safetensors
+  fixtures are built byte by byte in the test suite, so the readers are tested
+  against real container layouts without a download: still no test touches the
+  network.
+
+### Changed
+
+- **The README presents the expansion as first-class** rather than as
+  subsections of the reference: section 6 reads a checkpoint, 7 is `compare`,
+  `recommend` and `fleet`, 8 is the launch flags, 9 is the three output
+  formats, and the reference moves down to 10. Every console block in it is a
+  pasted run of the built binary.
+- **`--help` says which flags belong to which command** -- `--explain`,
+  `--launcher` and `--ngl` to `check` alone, `--json` and `--markdown` to all
+  seven -- and what "does not fit" means for each of them.
+
 ### Fixed
 
 - **Compute buffer no longer scales with `--batch`.** `n_ubatch` counts the
@@ -46,65 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `tsconfig.json` but silently discarded without `allowJs`.
 - **README** documents `best`'s exit 1, the `--json` payload, and the
   behaviour of `--vram`, `--efficiency` and `-q`.
-
-### Added
-
-- **`vramfit check ./model.gguf`** — read a real checkpoint instead of the
-  bundled database. The streaming header reader pulls one window at a time and
-  skips what it does not need, so a 40 GB file costs a few hundred kilobytes
-  of reads; the model's shape, attention flavour (GQA, MLA, sliding window)
-  and expert geometry come from the metadata, the parameter count is summed
-  from the shape table, and the bits per weight are measured from the ggml
-  type of every tensor — separately for the blocks, the embedding table and
-  the output head. Little-endian GGUF v2 and v3, every metadata value type
-  including nested arrays. `--gguf <path>` for a file that is not named
-  `.gguf`; `model.origin` and `model.from` in the JSON payload.
-- The smoke test covers the new commands and formats against the built
-  binary, including that a pipe receives no escape sequences and that the
-  memory bar's block characters survive on every supported platform.
-- **A memory-breakdown bar** under `check`'s memory table — weights, cache,
-  overhead and free, each with its own block character as well as its own
-  colour, so it reads with colour stripped. ANSI is emitted only for a
-  terminal that wants it: `--color` / `--no-color`, then `NO_COLOR`, then
-  `FORCE_COLOR`, then `TERM`, then whether stdout is a TTY.
-- **`--explain`** — every headline figure with the formula and the numbers
-  that produced it, switching KV formula with the model's attention flavour.
-- **`--markdown`** on every command, for pasting into an issue. The cells are
-  shared with the terminal renderer so the two cannot drift; the bar, the
-  launch flags and the `--explain` block go inside fences, the last folded
-  into a `<details>`. Refused together with `--json`.
-- **`--launcher` and `--ngl` on `check`** — the exact flags a fit implies, for
-  llama.cpp (`-ngl`, `-c`, `-fa`, `--cache-type-k/-v`, `--parallel`), Ollama
-  (`num_gpu`, `num_ctx`, and the environment variables it keeps them in) and
-  vLLM (`--gpu-memory-utilization` computed from the footprint over installed
-  memory, `--max-model-len`, `--tensor-parallel-size`, `--kv-cache-dtype`).
-  `--ngl` prints the layer count alone, for a shell substitution.
-- **`vramfit compare <model> --devices 4090,3090x2,m4-max`** — one model
-  across several devices in one ranked table: fits, headroom, largest context
-  and decode speed, what fits first and fastest first within that, with the
-  rows that do not fit ordered by how close they came.
-- **`vramfit recommend --device <d> [--use-case chat|code|long-context]`** —
-  every bundled model that fits, ranked by `capability x quality x speed` with
-  all three factors exposed in the JSON, and each row explained in a sentence.
-  The use case sets the context to check at and the decode bar to clear, and
-  nothing else: vramfit has no benchmark data and does not rank models by how
-  good they are at anything.
-- **`vramfit fleet --config fleet.json`** — heterogeneous machines against a
-  list of models, one row per model and one column per machine, exiting 1 when
-  any model fits nowhere. Model entries may be bundled names or paths.
-- **`vramfit check ./checkpoint/`** — read a HuggingFace `config.json` from a
-  local path, with `--hf-config <path>` for one named directly. Maps every
-  spelling the ecosystem uses for the same field (`num_local_experts` /
-  `num_experts` / `n_routed_experts`, a shared-expert count or a combined
-  width, `sliding_window` with and without `use_sliding_window`), descends
-  into `text_config` for multimodal releases, and takes the true parameter
-  count from a safetensors index or a single-file safetensors header beside
-  it. A count that cannot be reconciled with the decoder the config describes
-  is reported under *Notes* rather than charged to it.
-- `nativeQuant` on `ModelSpec`: a model released in a quantization of its own
-  is checked in that format by default and ranked by it in `best`, and wider
-  requantizations of it are left out. Both gpt-oss entries declare MXFP4, which
-  the recommender previously ignored in favour of a Q8_0 twice its size.
 
 ## [0.1.0] - 2026-08-22
 
@@ -190,5 +213,6 @@ dependencies.
   and library from there.
 - 242 tests across 12 files. No test touches the network.
 
-[Unreleased]: https://github.com/johan-becker/vramfit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/johan-becker/vramfit/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/johan-becker/vramfit/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/johan-becker/vramfit/releases/tag/v0.1.0
