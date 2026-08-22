@@ -59,6 +59,9 @@ keeps the test files and build scripts honest.
 | `src/gguf/` | Streaming GGUF header reader, and the mapping onto a `ModelSpec` and a `QuantSpec` |
 | `src/hf/` | HuggingFace `config.json` mapping, and the safetensors headers that give the parameter count |
 | `src/cli/` | Hand-rolled argument parsing, formatting and the pure `run(argv, io)` |
+| `src/cli/bar.ts`, `color.ts` | The memory bar, and the rules that decide whether anything is coloured |
+| `src/cli/explain.ts` | `--explain`: every headline number with its own arithmetic |
+| `src/cli/markdown.ts` | `--markdown`: the same cells, through pipes instead of spaces |
 | `src/data/*.json` | The bundled devices and models, each with a `source` string |
 
 ## Adding a device or a model
