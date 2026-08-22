@@ -1,3 +1,4 @@
+import { deriveArchitecture } from "../architecture.js";
 import type {
   AttentionKind,
   AttentionWindowSpec,
@@ -26,6 +27,26 @@ import type {
 
 /** Bumped when the on-disk shape changes incompatibly. */
 export const SCHEMA_VERSION = 1;
+
+/**
+ * How far a declared `totalParams` may sit from the count its own architecture
+ * implies. Published figures are rounded -- to three significant figures, or
+ * to "8B" -- and the derived count ignores biases, norms and rotary tables, so
+ * some drift is expected; the worst of the 24 bundled models is 0.040%. Five
+ * percent leaves room for a hand-rounded spec while still catching the errors
+ * that matter, which move the count by tens of percent or by factors of 1000.
+ */
+const TOTAL_PARAM_TOLERANCE = 0.05;
+
+/**
+ * Vendors disagree on whether "active parameters" counts the embedding table,
+ * the output head, both or neither -- gpt-oss counts one vocabulary matrix,
+ * Qwen counts two -- so the declared figure is checked against the range those
+ * conventions span rather than against one number, with 10% of slack on each
+ * end. That is still tight enough to catch a wrong `expertsPerToken`, which
+ * moves the active count by a factor of two or more.
+ */
+const ACTIVE_PARAM_SLACK = 0.1;
 
 const DEVICE_FAMILIES = [
   "cuda-consumer",
@@ -306,6 +327,32 @@ export function parseModelSpec(value: unknown, path = "model"): ModelSpec {
       `must equal totalParams for a dense model; declare a moe block if only some parameters are active`,
     );
   }
+
+  // The invariant that keeps the arithmetic honest: the shape fields and the
+  // headline parameter count have to describe the same model. Without it a
+  // 1000x typo in totalParams is schema-valid, and computeWeightBytes turns
+  // the resulting negative block count into a plausible-looking file size.
+  const arch = deriveArchitecture(spec);
+  const drift = Math.abs(arch.derivedTotalParams - totalParams) / totalParams;
+  if (drift > TOTAL_PARAM_TOLERANCE) {
+    fail(
+      `${path}.totalParams`,
+      `is ${totalParams}, but the architecture describes ${Math.round(arch.derivedTotalParams)} parameters -- ${(drift * 100).toFixed(1)}% apart, above the ${TOTAL_PARAM_TOLERANCE * 100}% tolerance. One of the two is wrong.`,
+    );
+  }
+
+  if (spec.moe !== null) {
+    const vocabParams = arch.inputEmbedParams + arch.outputHeadParams;
+    const low = arch.activeBlockParams * (1 - ACTIVE_PARAM_SLACK);
+    const high = (arch.activeBlockParams + vocabParams) * (1 + ACTIVE_PARAM_SLACK);
+    if (activeParams < low || activeParams > high) {
+      fail(
+        `${path}.activeParams`,
+        `is ${activeParams}, but routing ${spec.moe.expertsPerToken} of ${spec.moe.nExperts} experts activates ${Math.round(arch.activeBlockParams)} parameters per token, ${Math.round(arch.activeBlockParams + vocabParams)} counting the vocabulary tensors.`,
+      );
+    }
+  }
+
   return spec;
 }
 

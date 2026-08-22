@@ -325,6 +325,22 @@ describe("vramfit check", () => {
     expect(io.errors).toMatch(/model\.json\.nKvHeads must divide nHeads \(40\) evenly/);
   });
 
+  it("refuses a spec whose parameter count contradicts its architecture", () => {
+    // The 1000x slip that used to produce "FITS - 2.55 GiB of 24.00 GiB used"
+    // and exit 0 for a model that needs 4.62 GiB of weights alone.
+    const typo = JSON.stringify({
+      ...(JSON.parse(CUSTOM_MODEL) as Record<string, unknown>),
+      totalParams: 13_000_000,
+      activeParams: 13_000_000,
+    });
+    const { code, io } = invoke(["check", "--model-json", "model.json", "-d", "4090"], {
+      "model.json": typo,
+    });
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/model\.json\.totalParams is 13000000/);
+    expect(io.output).toBe("");
+  });
+
   it("reports an unreadable or malformed file clearly", () => {
     expect(invoke(["check", "--model-json", "missing.json", "-d", "4090"]).io.errors).toMatch(
       /Cannot read missing\.json/,

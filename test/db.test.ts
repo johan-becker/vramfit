@@ -43,7 +43,10 @@ function validModel(): Record<string, unknown> {
     nHeads: 32,
     nKvHeads: 8,
     headDim: 128,
-    ffnHidden: 11_008,
+    // The architecture has to add up to totalParams below: 32 layers of
+    // 41.9M attention plus 3 x 4096 x 13824 of FFN, plus two 32000 x 4096
+    // vocabulary matrices, is 7.04B.
+    ffnHidden: 13_824,
     vocabSize: 32_000,
     tiedEmbeddings: false,
     attention: "gqa",
@@ -386,6 +389,41 @@ describe("validation", () => {
       expect(() => parseModelSpec(raw)).toThrow(SpecValidationError);
     });
   }
+
+  it("rejects a parameter count the architecture cannot account for", () => {
+    // A 1000x slip is the likeliest error in a hand-written spec, and it used
+    // to pass: computeWeightBytes clamped the negative block count to zero and
+    // the report printed "0.70 GiB, 8M params at 745.13 effective bits/weight"
+    // with a cheerful FITS and exit 0.
+    const raw = validModel();
+    raw["totalParams"] = 7_000_000;
+    raw["activeParams"] = 7_000_000;
+    expect(() => parseModelSpec(raw, "my-model.json")).toThrow(
+      /my-model\.json\.totalParams is 7000000, but the architecture describes/,
+    );
+    expect(() => parseModelSpec(raw)).toThrow(SpecValidationError);
+  });
+
+  it("still accepts a parameter count rounded the way model cards round them", () => {
+    const raw = validModel();
+    raw["totalParams"] = 7_000_000_000;
+    raw["activeParams"] = 7_000_000_000;
+    expect(parseModelSpec(raw).totalParams).toBe(7_000_000_000);
+  });
+
+  it("rejects an active-parameter count the router cannot produce", () => {
+    const raw = JSON.parse(JSON.stringify(getModel("mixtral-8x7b"))) as Record<string, unknown>;
+    // 2 of 8 experts is 12.88B active, whatever you count the vocabulary as;
+    // 42B is the figure you get from mistaking active for total.
+    raw["activeParams"] = 42_000_000_000;
+    expect(() => parseModelSpec(raw, "moe.json")).toThrow(
+      /moe\.json\.activeParams is 42000000000, but routing 2 of 8 experts/,
+    );
+    // The published figure itself still passes, vocabulary convention and all.
+    expect(parseModelSpec(JSON.parse(JSON.stringify(getModel("mixtral-8x7b")))).activeParams).toBe(
+      getModel("mixtral-8x7b").activeParams,
+    );
+  });
 
   it("rejects a device that claims more usable memory than it has", () => {
     const raw = validDevice();

@@ -86,6 +86,17 @@ describe("active weight bytes (what decode actually reads)", () => {
     expect(w.activeBytes).toBeLessThan(w.totalBytes / 3);
   });
 
+  it("refuses a spec whose vocabulary tensors exceed its parameter count", () => {
+    // 8030261 instead of 8030261248: the validator catches this on the way in,
+    // but a spec built in code bypasses it, and clamping the negative block
+    // count to zero used to print "0.70 GiB, 8M params at 745.13 effective
+    // bits/weight" and call it a fit.
+    const typo = { ...LLAMA_3_1_8B, totalParams: 8_030_261, activeParams: 8_030_261 };
+    expect(() => computeWeightBytes(typo, getQuant("q4_k_m"))).toThrow(
+      /leaving nothing for the transformer blocks/,
+    );
+  });
+
   it("never lets active bytes exceed total bytes", () => {
     for (const model of [LLAMA_3_1_8B, MIXTRAL_8X7B, SWA_12B]) {
       for (const quant of ["f16", "q8_0", "q4_k_m", "q2_k"]) {
