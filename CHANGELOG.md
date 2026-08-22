@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the output head. Little-endian GGUF v2 and v3, every metadata value type
   including nested arrays. `--gguf <path>` for a file that is not named
   `.gguf`; `model.origin` and `model.from` in the JSON payload.
+- **`--launcher` and `--ngl` on `check`** — the exact flags a fit implies, for
+  llama.cpp (`-ngl`, `-c`, `-fa`, `--cache-type-k/-v`, `--parallel`), Ollama
+  (`num_gpu`, `num_ctx`, and the environment variables it keeps them in) and
+  vLLM (`--gpu-memory-utilization` computed from the footprint over installed
+  memory, `--max-model-len`, `--tensor-parallel-size`, `--kv-cache-dtype`).
+  `--ngl` prints the layer count alone, for a shell substitution.
 - **`vramfit compare <model> --devices 4090,3090x2,m4-max`** — one model
   across several devices in one ranked table: fits, headroom, largest context
   and decode speed, what fits first and fastest first within that, with the

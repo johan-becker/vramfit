@@ -9,6 +9,14 @@ import {
   type FleetMachine,
 } from "../fleet.js";
 import { openByteSource } from "../gguf/index.js";
+import {
+  LAUNCHER_RUNTIMES,
+  findLauncherRuntime,
+  gpuLayersFor,
+  launcherPlan,
+  type LauncherPlan,
+  type LauncherRuntime,
+} from "../launcher.js";
 import { getQuant } from "../quant.js";
 import {
   USE_CASE_IDS,
@@ -19,6 +27,7 @@ import {
 import type { DeviceSpec, QuantSpec } from "../types.js";
 import { Args, UsageError } from "./args.js";
 import {
+  directoryOf,
   isDirectoryPath,
   looksLikePath,
   looksLikeVramfitSpec,
@@ -182,6 +191,12 @@ RECOMMEND
                            chat: 8K and 15 tok/s).
       --limit <n>          Show only the top n models.
 
+LAUNCHER
+      --launcher [runtime] Print the exact flags this fit implies, for
+                           llama.cpp, ollama, vllm, or all three (default).
+      --ngl                Print only the llama.cpp -ngl value and exit, for
+                           use in a shell substitution.
+
 OUTPUT
       --json               Machine-readable output.
   -h, --help               This text.
@@ -194,6 +209,7 @@ EXAMPLES
   vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra
   vramfit recommend -d m4-max --use-case code
   vramfit fleet --config ./fleet.json
+  vramfit check llama-3.3-70b -d 4090 --ctx 8k --launcher llama.cpp
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
   vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
@@ -361,8 +377,29 @@ function emitJson(io: Io, payload: unknown): void {
   io.out(JSON.stringify(payload, null, 2));
 }
 
+/**
+ * Resolve `--launcher`.
+ *
+ * The value is optional -- `--launcher` on its own means all three runtimes,
+ * which is what most people want -- so the raw flag is read rather than
+ * `string()`, which would refuse the bare form as a missing value.
+ */
+function resolveLauncherRuntime(args: Args): LauncherRuntime | undefined {
+  const raw = args.flag("launcher");
+  if (raw === undefined) return undefined;
+  if (raw === true) return "all";
+  if (raw === false) return undefined;
+  const runtime = findLauncherRuntime(raw);
+  if (runtime === undefined) {
+    throw new UsageError(
+      `--launcher expects one of ${LAUNCHER_RUNTIMES.join(", ")}, got "${raw}"`,
+    );
+  }
+  return runtime;
+}
+
 function runCheck(args: Args, io: Io, version: string): number {
-  args.assertKnown([...SHARED_FLAGS, "quant"]);
+  args.assertKnown([...SHARED_FLAGS, "quant", "launcher", "ngl"]);
   assertNoExtraArguments(args, "check", 2);
 
   const source = resolveModelSource(args, io);
@@ -375,12 +412,44 @@ function runCheck(args: Args, io: Io, version: string): number {
   const options = fitOptions(args);
 
   const fit = checkFit(model, quant, device, options);
+
+  // `--ngl` is the one-number form, for `-ngl $(vramfit check ... --ngl)`.
+  // It prints the layer count and nothing else, so the substitution is usable
+  // straight away; the exit code still says whether the model fits.
+  if (args.boolean("ngl") === true) {
+    io.out(String(gpuLayersFor(fit)));
+    return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
+  }
+
   const recommendation = recommendQuant(model, device, options);
+  const runtime = resolveLauncherRuntime(args);
+  const launcher: LauncherPlan | undefined =
+    runtime === undefined
+      ? undefined
+      : launcherPlan(fit, {
+          // A GGUF path is passed as it stands; a HuggingFace checkpoint is
+          // named by its directory, which is what vLLM and Ollama take, rather
+          // than by the config.json inside it.
+          ...(source.origin === "gguf"
+            ? { ggufPath: source.from }
+            : source.origin === "huggingface"
+              ? { checkpointPath: directoryOf(source.from) }
+              : {}),
+          modelName: model.id,
+        });
 
   if (args.boolean("json") === true) {
-    emitJson(io, checkJson(fit, recommendation, version, source));
+    emitJson(io, checkJson(fit, recommendation, version, source, launcher));
   } else {
-    emit(io, renderCheck(fit, recommendation, { source }));
+    emit(
+      io,
+      renderCheck(fit, recommendation, {
+        source,
+        ...(launcher === undefined || runtime === undefined
+          ? {}
+          : { launcher: { plan: launcher, runtime } }),
+      }),
+    );
   }
   return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }

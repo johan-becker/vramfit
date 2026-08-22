@@ -1,6 +1,7 @@
 import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import type { FleetMachine, FleetReport } from "../fleet.js";
+import type { LauncherPlan, LauncherRuntime } from "../launcher.js";
 import { findQuant } from "../quant.js";
 import type { Recommendation, UseCaseProfile } from "../recommend.js";
 import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
@@ -35,6 +36,8 @@ const WRAP_WIDTH = 78;
 export interface ReportOptions {
   /** Where the model came from, when it did not come from the database. */
   source?: ResolvedModel;
+  /** The launch flags to print, and which runtimes to print them for. */
+  launcher?: { plan: LauncherPlan; runtime: LauncherRuntime };
 }
 
 /**
@@ -219,6 +222,11 @@ export function renderCheck(
     ...renderPairs(speedPairs(fit)),
   );
 
+  const launcher = options.launcher;
+  if (launcher !== undefined) {
+    lines.push("", ...renderLaunch(launcher.plan, launcher.runtime));
+  }
+
   // Notes the source reader had to make -- a parameter count that did not
   // reconcile, an assumed dtype -- belong beside the ones the fit produced,
   // and come first, because they are about the inputs rather than the answer.
@@ -240,6 +248,7 @@ export function checkJson(
   recommendation: QuantOption | undefined,
   version: string,
   source?: ResolvedModel,
+  launcher?: LauncherPlan,
 ): unknown {
   return {
     vramfit: version,
@@ -310,6 +319,10 @@ export function checkJson(
           blendedBandwidthBytesPerSecond: fit.offload.bandwidth.peakBytesPerSecond,
         }
       : null,
+    // Present only when --launcher was asked for: the documented payload has
+    // a fixed set of keys, and a block of flags nobody requested does not
+    // belong in it.
+    ...(launcher === undefined ? {} : { launcher: launcherJson(launcher) }),
     warnings: fit.warnings,
   };
 }
@@ -827,5 +840,79 @@ export function fleetJson(report: FleetReport, version: string): unknown {
         decodeTokensPerSecond: cell.fit.throughput.decode.tokensPerSecond,
       })),
     })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* launcher flags                                                              */
+/* -------------------------------------------------------------------------- */
+
+function launcherBlock(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
+  const lines: string[] = [];
+  const wants = (id: LauncherRuntime): boolean => runtime === "all" || runtime === id;
+
+  if (wants("llama.cpp")) {
+    lines.push("  llama.cpp", `    ${plan.llamaCpp.command}`);
+  }
+  if (wants("ollama")) {
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      "  Ollama  (Modelfile)",
+      ...plan.ollama.modelfile.map((line) => `    ${line}`),
+      `    ${plan.ollama.environment.join("  ")}`,
+    );
+  }
+  if (wants("vllm")) {
+    if (lines.length > 0) lines.push("");
+    lines.push("  vLLM", `    ${plan.vllm.command}`);
+  }
+  return lines;
+}
+
+/** The `Launch` section of `vramfit check --launcher`. */
+export function renderLaunch(plan: LauncherPlan, runtime: LauncherRuntime): string[] {
+  const lines = ["Launch", ...launcherBlock(plan, runtime)];
+  if (plan.notes.length > 0) {
+    lines.push("");
+    for (const note of plan.notes) {
+      const wrapped = wrap(note, WRAP_WIDTH, "    ");
+      lines.push(`  - ${(wrapped[0] ?? "").trimStart()}`, ...wrapped.slice(1));
+    }
+  }
+  return lines;
+}
+
+/** The `launcher` block of `vramfit check --json`. */
+export function launcherJson(plan: LauncherPlan): unknown {
+  return {
+    llamaCpp: {
+      nGpuLayers: plan.llamaCpp.nGpuLayers,
+      ctx: plan.llamaCpp.ctx,
+      ubatch: plan.llamaCpp.ubatch,
+      parallel: plan.llamaCpp.parallel,
+      flashAttention: plan.llamaCpp.flashAttention,
+      cacheType: plan.llamaCpp.cacheType,
+      args: plan.llamaCpp.args,
+      command: plan.llamaCpp.command,
+    },
+    ollama: {
+      numGpu: plan.ollama.numGpu,
+      numCtx: plan.ollama.numCtx,
+      numBatch: plan.ollama.numBatch,
+      modelfile: plan.ollama.modelfile,
+      options: plan.ollama.options,
+      environment: plan.ollama.environment,
+    },
+    vllm: {
+      gpuMemoryUtilization: plan.vllm.gpuMemoryUtilization,
+      maxModelLen: plan.vllm.maxModelLen,
+      tensorParallelSize: plan.vllm.tensorParallelSize,
+      maxNumSeqs: plan.vllm.maxNumSeqs,
+      kvCacheDtype: plan.vllm.kvCacheDtype,
+      quantization: plan.vllm.quantization,
+      args: plan.vllm.args,
+      command: plan.vllm.command,
+    },
+    notes: plan.notes,
   };
 }
