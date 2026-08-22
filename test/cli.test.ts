@@ -140,6 +140,31 @@ describe("vramfit check", () => {
     expect(payload.throughput.timeToFirstTokenSeconds).toBeLessThan(1);
   });
 
+  it("accepts a value-less flag before the model, as every other CLI does", () => {
+    const { code, io } = invoke(["check", "--json", "llama-3.1-8b", "-d", "4090", "--ctx", "8k"]);
+    expect(code).toBe(EXIT_OK);
+    const payload = JSON.parse(io.output) as { model: { id: string } };
+    expect(payload.model.id).toBe("llama-3.1-8b");
+  });
+
+  it("refuses an argument the command has no meaning for", () => {
+    // --flash-attn takes no separate value, so "false" here is a stray word.
+    // Silently ignoring it would answer a question the user did not ask.
+    const { code, io } = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "4090",
+      "--flash-attn",
+      "false",
+    ]);
+    expect(code).toBe(EXIT_USAGE);
+    expect(io.errors).toMatch(/Unexpected argument "false"/);
+    expect(io.errors).toMatch(/--flag=value/);
+
+    expect(invoke(["models", "extra"]).code).toBe(EXIT_USAGE);
+  });
+
   it("reports a --vram override as the whole usable budget", () => {
     const capped = invoke(["check", "llama-3.1-8b", "-d", "m4-max", "--ctx", "8k"]).io.output;
     expect(capped).toMatch(/Available\s+96\.00 GiB\s+Apple M4 Max, 75% of 128 GiB wirable/);
