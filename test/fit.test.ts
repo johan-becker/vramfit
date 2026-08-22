@@ -75,6 +75,20 @@ describe("checkFit: the verdict", () => {
     }
   });
 
+  it("does not inflate the compute buffer with the number of sequences", () => {
+    // A batched-serving configuration: 32 sequences of 4K on one 24 GiB card.
+    // The compute buffer is one 512-token graph plus 32 FP32 logit rows, well
+    // under a GiB; charging one graph per sequence made it 4.89 GiB and turned
+    // this into a false "does not fit" with the exit code a deploy gate reads.
+    const fit = checkFit(getModel("llama-3.1-8b"), Q4, getDevice("rtx-4090"), {
+      ctx: 4096,
+      batch: 32,
+    });
+    expect(bytesToGiB(fit.footprint.activationBytes)).toBeLessThan(0.5);
+    expect(bytesToGiB(fit.usedBytes)).toBeLessThan(24);
+    expect(fit.fits).toBe(true);
+  });
+
   it("defaults the context to the model's own default", () => {
     const model = getModel("llama-3.1-8b");
     expect(checkFit(model, Q4, getDevice("rtx-4090")).ctx).toBe(model.defaultCtx);
