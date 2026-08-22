@@ -90,7 +90,8 @@ CONFIGURATION
   -b, --batch <n>          Concurrent sequences (default 1).
       --kv-quant <id>      KV cache type: f16, q8_0, q5_1, q5_0, q4_1, q4_0.
   -g, --gpus <n>           Identical devices sharing the model (default 1).
-      --vram <GiB>         Override the device's memory, per device.
+      --vram <GiB>         Usable memory per device, used as given. Not
+                           scaled by the device's usable fraction.
       --ubatch <n>         Physical batch, llama.cpp --ubatch-size (default 512).
       --no-flash-attn      Model the compute buffer without flash attention.
       --prompt <n>         Prompt length for time-to-first-token.
