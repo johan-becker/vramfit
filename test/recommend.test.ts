@@ -135,6 +135,29 @@ describe("vramfit recommend", () => {
     for (const line of io.output.split("\n")) expect(line).toBe(line.trimEnd());
   });
 
+  it("starts the trade-off under the Model column however wide the index is", () => {
+    // The unlimited form is the default, and from the tenth row the index
+    // column is three wide: a hard-coded four-space indent left every
+    // trade-off one column short of the row it belongs to.
+    for (const argv of [["recommend", "-d", "4090"], ["recommend", "-d", "4090", "--limit", "3"]]) {
+      const { io } = invoke(argv);
+      const lines = io.output.split("\n");
+      const header = lines.find((line) => line.includes("#  Model"));
+      if (header === undefined) throw new Error("expected a table header");
+      const modelColumn = header.indexOf("Model");
+
+      const rowPattern = /^\s*\d+\.\s{2}\S/;
+      const body = lines.slice(lines.indexOf(header) + 2);
+      const tradeoffs = body.filter(
+        (line) => line.startsWith(" ") && line.trim() !== "" && !rowPattern.test(line),
+      );
+      expect(tradeoffs.length).toBeGreaterThan(0);
+      for (const line of tradeoffs) {
+        expect(line.search(/\S/), line).toBe(modelColumn);
+      }
+    }
+  });
+
   it("says so, usefully, when nothing fits", () => {
     // A gigabyte of usable memory is gone before a weight is placed.
     const { code, io } = invoke(["recommend", "-d", "4090", "--vram", "1"]);
