@@ -6,8 +6,12 @@ import { getQuant } from "../quant.js";
 import type { DeviceSpec, QuantSpec } from "../types.js";
 import { Args, UsageError } from "./args.js";
 import {
+  isDirectoryPath,
   looksLikePath,
+  looksLikeVramfitSpec,
+  readJsonFile,
   resolveGgufPath,
+  resolveHfCheckpoint,
   type PathKind,
   type ResolvedModel,
   type SourceIo,
@@ -99,12 +103,16 @@ COMMANDS
 MODEL AND DEVICE
   <model>                  Bundled id, name or alias, e.g. llama-3.1-8b,
                            "Llama 3.1 8B", llama3.1:8b -- see "vramfit models"
-                           -- or the path to a GGUF file, which is read from
-                           its own header: ./Llama-3.1-8B-Q4_K_M.gguf.
+                           -- or a path: a GGUF file read from its own header
+                           (./Llama-3.1-8B-Q4_K_M.gguf), or a HuggingFace
+                           checkpoint directory (./Llama-3.1-8B/).
   -d, --device <id>        Bundled device id, name or alias, e.g. 4090,
                            "RTX 4090", m3-max. See "vramfit devices".
       --gguf <path>        Read the model from a GGUF file whatever it is
                            named. Only the header is read, never the weights.
+      --hf-config <path>   Read the model from a HuggingFace config.json.
+                           A safetensors index beside it, if there is one,
+                           gives the true parameter count.
       --model-json <path>  Use a model spec from a JSON file instead.
       --device-json <path> Use a device spec from a JSON file instead.
 
@@ -144,6 +152,7 @@ EXAMPLES
   vramfit best qwen2.5-32b --device m3-max
   vramfit check gemma-3-27b -d 3060 --ram 64 --json
   vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
+  vramfit check ./Qwen3-32B/ -d m4-max --ctx 32k
 
 EXIT CODES
   0  fits    1  does not fit    2  bad usage`;
@@ -153,6 +162,7 @@ const SHARED_FLAGS = [
   "device-json",
   "model-json",
   "gguf",
+  "hf-config",
   "ctx",
   "batch",
   "kv-quant",
@@ -175,26 +185,7 @@ function loadJsonFile<T>(
   path: string,
   parse: (value: unknown, label: string) => T,
 ): T {
-  let text: string;
-  try {
-    text = io.readFile(path);
-  } catch {
-    throw new UsageError(`Cannot read ${path}`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch (cause) {
-    // V8's JSON.parse message quotes the first bytes of the input, so passing
-    // it through would print the head of whatever file was named -- a mistyped
-    // path in a CI step should not echo a secrets file into the build log.
-    // Keep the position it reports, drop the excerpt.
-    const at = /in JSON at (position \d+(?: \(line \d+ column \d+\))?)/.exec(
-      (cause as Error).message,
-    );
-    throw new UsageError(`${path} is not valid JSON${at ? ` (${at[1]})` : ""}`);
-  }
-  return parse(parsed, path);
+  return parse(readJsonFile(io, path), path);
 }
 
 /**
@@ -205,9 +196,22 @@ function loadJsonFile<T>(
  * wrong guess about a file format is a wrong answer about a deployment.
  */
 function resolvePath(io: Io, path: string): ResolvedModel {
-  if (path.toLowerCase().endsWith(".gguf")) return resolveGgufPath(io, path);
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".gguf")) return resolveGgufPath(io, path);
+  if (isDirectoryPath(io, path)) return resolveHfCheckpoint(io, path);
+  if (lower.endsWith(".json")) {
+    // A .json here is a HuggingFace config unless it is one of vramfit's own
+    // specs, which is decided by looking rather than by asking: `nLayers` is
+    // vramfit's spelling and `num_hidden_layers` is HuggingFace's, so the two
+    // can never be confused for one another.
+    const parsed = readJsonFile(io, path);
+    if (looksLikeVramfitSpec(parsed)) {
+      return { model: parseModelSpec(parsed, path), origin: "json", from: path };
+    }
+    return resolveHfCheckpoint(io, path, parsed);
+  }
   throw new UsageError(
-    `${path} is not a GGUF file. Pass a .gguf path, a bundled model name (see "vramfit models"), or a spec with --model-json.`,
+    `${path} is not a format vramfit reads. Pass a .gguf file, a HuggingFace checkpoint directory or its config.json, a bundled model name (see "vramfit models"), or a spec with --model-json.`,
   );
 }
 
@@ -215,6 +219,9 @@ function resolvePath(io: Io, path: string): ResolvedModel {
 function resolveModelSource(args: Args, io: Io): ResolvedModel {
   const ggufPath = args.string("gguf");
   if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
+
+  const hfPath = args.string("hf-config");
+  if (hfPath !== undefined) return resolveHfCheckpoint(io, hfPath);
 
   const specPath = args.string("model-json");
   if (specPath !== undefined) {

@@ -1,5 +1,16 @@
 import { describeGguf, type GgufModel } from "../gguf/index.js";
 import { GgufError, readGgufHeader, type ByteSource } from "../gguf/reader.js";
+import {
+  HfConfigError,
+  SafetensorsError,
+  TORCH_DTYPE_BYTES,
+  modelFromHfConfig,
+  parseSafetensorsIndex,
+  readSafetensorsHeader,
+  textConfigOf,
+  type HfModel,
+  type HfModelOptions,
+} from "../hf/index.js";
 import type { ModelSpec, QuantSpec } from "../types.js";
 import { UsageError } from "./args.js";
 
@@ -115,6 +126,8 @@ export interface ResolvedModel {
   from: string;
   /** One line describing the source, printed above the report. */
   description?: string;
+  /** Anything the reader had to decide, shown under the report's Notes. */
+  notes?: string[];
 }
 
 /** Describe a GGUF file the way the report shows it above the verdict. */
@@ -138,4 +151,162 @@ export function resolveGgufPath(io: SourceIo, path: string): ResolvedModel {
     from: path,
     description: describeGgufSource(path, gguf),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* JSON on disk                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** The directory a path sits in, with forward slashes and no trailing one. */
+export function directoryOf(path: string): string {
+  const at = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return at < 0 ? "." : path.slice(0, at);
+}
+
+/**
+ * Read and parse a JSON file.
+ *
+ * V8's `JSON.parse` message quotes the first bytes of its input, so passing it
+ * through would print the head of whatever file was named -- a mistyped path
+ * in a CI step should not echo a secrets file into the build log. The position
+ * it reports is kept; the excerpt is not.
+ */
+export function readJsonFile(io: SourceIo, path: string): unknown {
+  let text: string;
+  try {
+    text = io.readFile(path);
+  } catch {
+    throw new UsageError(`Cannot read ${path}`);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (cause) {
+    const at = /in JSON at (position \d+(?: \(line \d+ column \d+\))?)/.exec(
+      (cause as Error).message,
+    );
+    throw new UsageError(`${path} is not valid JSON${at ? ` (${at[1]})` : ""}`);
+  }
+}
+
+/** True when a parsed object is a vramfit `ModelSpec` rather than an HF config. */
+export function looksLikeVramfitSpec(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const object = value as Record<string, unknown>;
+  return object["nLayers"] !== undefined || object["nKvHeads"] !== undefined;
+}
+
+/* -------------------------------------------------------------------------- */
+/* HuggingFace checkpoints                                                     */
+/* -------------------------------------------------------------------------- */
+
+const CONFIG_FILE = "config.json";
+const SAFETENSORS_INDEX_FILE = "model.safetensors.index.json";
+const SAFETENSORS_FILE = "model.safetensors";
+
+/** Bytes per parameter implied by `torch_dtype`, defaulting to 16-bit. */
+function dtypeBytes(config: unknown): { bytes: number; declared: boolean } {
+  if (typeof config !== "object" || config === null) return { bytes: 2, declared: false };
+  const root = config as Record<string, unknown>;
+  const raw = root["torch_dtype"] ?? root["dtype"] ?? textConfigOf(root)["torch_dtype"];
+  if (typeof raw !== "string") return { bytes: 2, declared: false };
+  const bytes = TORCH_DTYPE_BYTES[raw.toLowerCase()];
+  return bytes === undefined ? { bytes: 2, declared: false } : { bytes, declared: true };
+}
+
+interface WeightCount {
+  totalParams: number;
+  source: "safetensors" | "index";
+  /** The file it came from, for the report. */
+  from: string;
+  note?: string;
+}
+
+/**
+ * The parameter count the weight files state, if any of them are there.
+ *
+ * A sharded repository is the common case for anything above 7B and carries an
+ * index whose `metadata.total_size` is the byte total; dividing by the dtype
+ * width recovers the count. A single-file repository is exact without any
+ * division, because its header lists every tensor's shape.
+ */
+function weightCount(io: SourceIo, directory: string, config: unknown): WeightCount | undefined {
+  const indexPath = joinPath(directory, SAFETENSORS_INDEX_FILE);
+  if (io.pathKind?.(indexPath) === "file") {
+    const index = parseSafetensorsIndex(readJsonFile(io, indexPath), indexPath);
+    const dtype = dtypeBytes(config);
+    const count: WeightCount = {
+      totalParams: index.totalSizeBytes / dtype.bytes,
+      source: "index",
+      from: `${SAFETENSORS_INDEX_FILE} (${index.shards} shards)`,
+    };
+    if (!dtype.declared) {
+      count.note = `${indexPath} gives bytes, not parameters, and the config declares no torch_dtype; 16-bit weights are assumed.`;
+    }
+    return count;
+  }
+
+  const singlePath = joinPath(directory, SAFETENSORS_FILE);
+  if (io.pathKind?.(singlePath) === "file" && io.openBytes !== undefined) {
+    const source = io.openBytes(singlePath);
+    try {
+      const header = readSafetensorsHeader(source);
+      return { totalParams: header.totalParams, source: "safetensors", from: SAFETENSORS_FILE };
+    } finally {
+      source.close();
+    }
+  }
+  return undefined;
+}
+
+/** Describe a HuggingFace checkpoint the way the report shows it. */
+export function describeHfSource(path: string, hf: HfModel, from: string): string {
+  const parts = [`${hf.model.nLayers} layers`, `${hf.model.nKvHeads} KV heads`];
+  parts.push(
+    hf.paramSource === "architecture"
+      ? "parameters derived from the architecture"
+      : `parameters from ${from}`,
+  );
+  return `Read from ${path}  (${parts.join(", ")})`;
+}
+
+/**
+ * Resolve a HuggingFace checkpoint: a directory, or the `config.json` inside
+ * one. The weight files beside it are consulted for the parameter count and
+ * for nothing else -- only their headers are read.
+ */
+export function resolveHfCheckpoint(
+  io: SourceIo,
+  path: string,
+  /** The already-parsed contents of `path`, when the caller has read it to
+   *  decide what kind of file it was. Ignored when `path` is a directory. */
+  parsedConfig?: unknown,
+): ResolvedModel {
+  const directory = isDirectoryPath(io, path) ? path : directoryOf(path);
+  const configPath = isDirectoryPath(io, path) ? joinPath(path, CONFIG_FILE) : path;
+  const config =
+    parsedConfig !== undefined && configPath === path ? parsedConfig : readJsonFile(io, configPath);
+
+  try {
+    const counted = weightCount(io, directory, config);
+    const options: HfModelOptions = { origin: configPath };
+    if (counted !== undefined) {
+      options.weights = { totalParams: counted.totalParams, source: counted.source };
+    }
+    const hf = modelFromHfConfig(config, options);
+    const notes = [...hf.notes];
+    if (counted?.note !== undefined && hf.paramSource !== "architecture") notes.push(counted.note);
+
+    return {
+      model: hf.model,
+      origin: "huggingface",
+      from: configPath,
+      description: describeHfSource(configPath, hf, counted?.from ?? CONFIG_FILE),
+      notes,
+    };
+  } catch (error) {
+    if (error instanceof HfConfigError || error instanceof SafetensorsError) {
+      throw new UsageError(`${configPath}: ${error.message}`);
+    }
+    throw error;
+  }
 }
