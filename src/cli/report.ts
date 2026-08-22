@@ -413,7 +413,12 @@ export function renderBest(
   const shape = bestTableShape(options, ctx);
 
   const starved = options.find(isOffloadInfeasible);
-  const native = model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant);
+  // A file on disk states its format by being in it, which is a stronger
+  // answer than the model's declared `nativeQuant` and the one the table was
+  // ranked from.
+  const native =
+    report.source?.quant ??
+    (model.nativeQuant === undefined ? undefined : findQuant(model.nativeQuant));
   const recommended = options.find((option) => option.fit.fits);
 
   return [
@@ -431,7 +436,7 @@ export function renderBest(
       : []),
     ...(native
       ? wrap(
-          `${model.name} ships in ${native.label}, so that is the best quality there is for it: a wider quantization would be a larger file holding the same ${native.bitsPerWeight} bits per weight, and is left out.`,
+          `${model.name} ${report.source?.quant === undefined ? "ships in" : "is on disk as"} ${native.label}, so that is the best quality there is for it: a wider quantization would be a larger file holding the same ${native.bitsPerWeight.toFixed(2)} bits per weight, and is left out.`,
           WRAP_WIDTH,
         ).concat("")
       : []),

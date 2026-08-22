@@ -14,7 +14,13 @@ import {
   splitDeviceList,
   type DeviceCandidate,
 } from "../compare.js";
-import { checkFit, evaluateQuants, recommendQuant, type FitOptions } from "../fit.js";
+import {
+  checkFit,
+  evaluateQuants,
+  recommendQuant,
+  type FitOptions,
+  type QuantSearchOptions,
+} from "../fit.js";
 import {
   parseFleetConfig,
   planFleet,
@@ -373,6 +379,21 @@ function resolveDevice(args: Args, io: Io): DeviceSpec {
   return getDevice(name);
 }
 
+/**
+ * Fit options plus the format the source is already in.
+ *
+ * README section 10.6: "A model released in a quantization of its own says so
+ * with nativeQuant. That format is then the default for check and the top of
+ * the best table, and wider quantizations of it are left out." A GGUF file is
+ * that case measured rather than declared, so its own bits per weight go into
+ * the search -- otherwise `best` sizes its row from the table's nominal
+ * figure while `check` sizes the same file from the file, and the two
+ * commands report different totals for one checkpoint.
+ */
+function quantSearchOptions(options: FitOptions, source: ResolvedModel): QuantSearchOptions {
+  return source.quant === undefined ? options : { ...options, nativeQuant: source.quant };
+}
+
 function fitOptions(args: Args): FitOptions {
   const options: FitOptions = {};
   const ctx = args.tokens("ctx");
@@ -508,7 +529,10 @@ function runCheck(args: Args, io: Io, version: string): number {
     return fit.fits ? EXIT_OK : EXIT_DOES_NOT_FIT;
   }
 
-  const recommendation = recommendQuant(model, device, options);
+  // The Capacity line answers "best quant that fits", and a file already in
+  // one cannot be requantized upwards: without its own format in hand the
+  // report offered F16 for a Q4_K_M file, which does not exist.
+  const recommendation = recommendQuant(model, device, quantSearchOptions(options, source));
   const runtime = resolveLauncherRuntime(args);
   const launcher: LauncherPlan | undefined =
     runtime === undefined
@@ -716,7 +740,7 @@ function runBest(args: Args, io: Io, version: string): number {
   const model = source.model;
   const device = resolveDevice(args, io);
   const options = fitOptions(args);
-  const evaluated = evaluateQuants(model, device, options);
+  const evaluated = evaluateQuants(model, device, quantSearchOptions(options, source));
   const ctx = options.ctx ?? model.defaultCtx;
 
   switch (resolveFormat(args)) {

@@ -256,6 +256,12 @@ export interface GgufModelOptions {
   origin?: string;
   /** Context to check by default. Clamped to the architecture's maximum. */
   defaultCtx?: number;
+  /**
+   * The format the file is in, as a known quantization id. A file already in
+   * a quantization is the strongest case of `ModelSpec.nativeQuant`: a wider
+   * requantization of it would be a larger file holding the same weights.
+   */
+  nativeQuant?: string;
 }
 
 /** Context vramfit checks by default when the file does not suggest one. */
@@ -441,6 +447,7 @@ export function modelFromGguf(header: GgufHeader, options: GgufModelOptions = {}
     // which. The architecture knows the ratio; no metadata field states it.
     draft.activeParams = deriveArchitecture(draft).activeMatmulParams;
   }
+  if (options.nativeQuant !== undefined) draft.nativeQuant = options.nativeQuant;
 
   return parseModelSpec(draft, "gguf");
 }
@@ -471,7 +478,18 @@ function ggufNotes(model: ModelSpec): string[] {
 
 /** Everything vramfit reads out of one GGUF file, in one call. */
 export function describeGguf(header: GgufHeader, options: GgufModelOptions = {}): GgufModel {
-  const model = modelFromGguf(header, options);
+  // The file's format is the model's native one, so `best` ranks from it and
+  // leaves the wider quantizations out -- there is no F16 to be had from a
+  // Q4_K_M file. Only a format the quantization table names can be recorded;
+  // a mix with no name of its own is described by the measured spec alone.
+  const fileType = ggufFileType(header);
+  const named = fileType === undefined ? undefined : findQuant(fileType);
+  // The model is built first so that a file with a broken shape table fails
+  // by the field it is missing rather than by the measurement that needed it.
+  const model = modelFromGguf(
+    header,
+    named === undefined ? options : { ...options, nativeQuant: named.id },
+  );
   return {
     header,
     model,
