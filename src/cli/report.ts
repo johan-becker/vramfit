@@ -216,9 +216,13 @@ export function renderCheck(
     ...renderPairs(speedPairs(fit)),
   );
 
-  if (fit.warnings.length > 0) {
+  // Notes the source reader had to make -- a parameter count that did not
+  // reconcile, an assumed dtype -- belong beside the ones the fit produced,
+  // and come first, because they are about the inputs rather than the answer.
+  const notes = [...(options.source?.notes ?? []), ...fit.warnings];
+  if (notes.length > 0) {
     lines.push("", "Notes");
-    for (const warning of fit.warnings) {
+    for (const warning of notes) {
       const wrapped = wrap(warning, WRAP_WIDTH, "    ");
       lines.push(`  - ${(wrapped[0] ?? "").trimStart()}`, ...wrapped.slice(1));
     }

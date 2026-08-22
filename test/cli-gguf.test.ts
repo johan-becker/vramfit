@@ -1,78 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { listDevices, listModels } from "../src/db/index.js";
-import { EXIT_DOES_NOT_FIT, EXIT_OK, EXIT_USAGE, run, type Io } from "../src/cli/index.js";
+import { EXIT_DOES_NOT_FIT, EXIT_OK, EXIT_USAGE, run } from "../src/cli/index.js";
 import { looksLikePath } from "../src/cli/source.js";
-import type { ClosableByteSource, PathKind } from "../src/cli/source.js";
+import { FakeIo } from "./fake-io.js";
 import { GgufBuilder, llamaGgufBytes, moeGgufBuilder, str } from "./gguf-fixtures.js";
 
 /**
  * `vramfit check ./model.gguf`, end to end, against headers built in memory.
  *
- * The IO object is the seam: the fake below serves bytes out of a Map, so the
- * command runs exactly as it would against a 5 GB file on disk without one
- * existing. `closed` records that the file handle was released, including on
- * the failure paths.
+ * `FakeIo` is the seam: it serves bytes out of a Map, so the command runs
+ * exactly as it would against a 5 GB file on disk without one existing.
  */
-class FakeIo implements Io {
-  readonly stdout: string[] = [];
-  readonly stderr: string[] = [];
-  readonly closed: string[] = [];
-  private readonly text: Map<string, string>;
-  private readonly binary: Map<string, Uint8Array>;
-  private readonly directories: Set<string>;
-
-  constructor(
-    files: { text?: Record<string, string>; binary?: Record<string, Uint8Array>; directories?: string[] } = {},
-  ) {
-    this.text = new Map(Object.entries(files.text ?? {}));
-    this.binary = new Map(Object.entries(files.binary ?? {}));
-    this.directories = new Set(files.directories ?? []);
-  }
-
-  out(text: string): void {
-    this.stdout.push(text);
-  }
-
-  err(text: string): void {
-    this.stderr.push(text);
-  }
-
-  readFile(path: string): string {
-    const content = this.text.get(path);
-    if (content === undefined) throw new Error(`ENOENT: ${path}`);
-    return content;
-  }
-
-  openBytes(path: string): ClosableByteSource {
-    const bytes = this.binary.get(path);
-    if (bytes === undefined) throw new Error(`ENOENT: ${path}`);
-    const closed = this.closed;
-    return {
-      size: bytes.length,
-      read(offset: number, length: number): Uint8Array {
-        return bytes.subarray(offset, offset + Math.max(0, length));
-      },
-      close(): void {
-        closed.push(path);
-      },
-    };
-  }
-
-  pathKind(path: string): PathKind {
-    if (this.directories.has(path)) return "directory";
-    if (this.binary.has(path) || this.text.has(path)) return "file";
-    return "missing";
-  }
-
-  get output(): string {
-    return this.stdout.join("\n");
-  }
-
-  get errors(): string {
-    return this.stderr.join("\n");
-  }
-}
-
 const LLAMA_PATH = "./models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf";
 
 function invoke(argv: string[], binary: Record<string, Uint8Array> = {}) {
@@ -207,7 +145,7 @@ describe("vramfit check <path> diagnostics", () => {
   it("refuses a path whose format it does not read", () => {
     const { code, io } = invoke(["check", "./model.safetensors", "-d", "4090"]);
     expect(code).toBe(EXIT_USAGE);
-    expect(io.errors).toMatch(/is not a GGUF file\. Pass a \.gguf path/);
+    expect(io.errors).toMatch(/is not a format vramfit reads\. Pass a \.gguf file/);
   });
 
   it("refuses a GGUF whose metadata is missing the shape it needs", () => {

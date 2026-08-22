@@ -59,6 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the output head. Little-endian GGUF v2 and v3, every metadata value type
   including nested arrays. `--gguf <path>` for a file that is not named
   `.gguf`; `model.origin` and `model.from` in the JSON payload.
+- **`vramfit check ./checkpoint/`** — read a HuggingFace `config.json` from a
+  local path, with `--hf-config <path>` for one named directly. Maps every
+  spelling the ecosystem uses for the same field (`num_local_experts` /
+  `num_experts` / `n_routed_experts`, a shared-expert count or a combined
+  width, `sliding_window` with and without `use_sliding_window`), descends
+  into `text_config` for multimodal releases, and takes the true parameter
+  count from a safetensors index or a single-file safetensors header beside
+  it. A count that cannot be reconciled with the decoder the config describes
+  is reported under *Notes* rather than charged to it.
 - `nativeQuant` on `ModelSpec`: a model released in a quantization of its own
   is checked in that format by default and ranked by it in `best`, and wider
   requantizations of it are left out. Both gpt-oss entries declare MXFP4, which
