@@ -2,6 +2,7 @@ import type { FitResult, QuantOption } from "../fit.js";
 import { findQuant } from "../quant.js";
 import type { DeviceSpec, ModelSpec } from "../types.js";
 import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
+import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
   formatPercent,
@@ -26,6 +27,22 @@ import {
  */
 
 const WRAP_WIDTH = 78;
+
+/** Presentation choices a report takes from the command line. */
+export interface ReportOptions {
+  /** Where the model came from, when it did not come from the database. */
+  source?: ResolvedModel;
+}
+
+/**
+ * The line above the report naming the file the model was read from. Absent
+ * for the bundled database, which needs no explanation, and for a spec file,
+ * which is already the user's own words.
+ */
+function sourceLines(options: ReportOptions): string[] {
+  const description = options.source?.description;
+  return description === undefined ? [] : [description, ""];
+}
 
 function describeKvGeometry(model: ModelSpec, fit: FitResult): string {
   const parts: string[] = [`${formatContext(fit.ctx)} tokens`];
@@ -156,6 +173,7 @@ function offloadPairs(fit: FitResult): Pair[] {
 export function renderCheck(
   fit: FitResult,
   recommendation: QuantOption | undefined,
+  options: ReportOptions = {},
 ): string[] {
   const lines: string[] = [];
   const heading = [
@@ -164,7 +182,7 @@ export function renderCheck(
     fit.gpus > 1 ? `${fit.gpus} x ${fit.device.name}` : fit.device.name,
   ].join("  |  ");
 
-  lines.push(heading, "=".repeat(heading.length), "", verdictLine(fit), "");
+  lines.push(heading, "=".repeat(heading.length), "", ...sourceLines(options), verdictLine(fit), "");
   lines.push("Memory", ...renderPairs(memoryPairs(fit)), "");
 
   lines.push(
@@ -214,6 +232,7 @@ export function checkJson(
   fit: FitResult,
   recommendation: QuantOption | undefined,
   version: string,
+  source?: ResolvedModel,
 ): unknown {
   return {
     vramfit: version,
@@ -221,6 +240,10 @@ export function checkJson(
     model: {
       id: fit.model.id,
       name: fit.model.name,
+      // Where the spec came from: the bundled database, a GGUF file read from
+      // its own header, a HuggingFace config.json, or a --model-json spec.
+      origin: source?.origin ?? "database",
+      from: source?.from ?? fit.model.id,
       totalParams: fit.model.totalParams,
       activeParams: fit.model.activeParams,
       nLayers: fit.model.nLayers,
@@ -296,6 +319,7 @@ export function renderBest(
   options: readonly QuantOption[],
   ctx: number,
   gpus: number,
+  report: ReportOptions = {},
 ): string[] {
   const heading = `${model.name}  |  ${gpus > 1 ? `${gpus} x ${device.name}` : device.name}`;
   // The quantization notes are a paragraph each and would make every column
@@ -322,6 +346,7 @@ export function renderBest(
     heading,
     "=".repeat(heading.length),
     "",
+    ...sourceLines(report),
     ...renderTable(
       [
         { header: "Quant" },

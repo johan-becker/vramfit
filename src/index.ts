@@ -2,9 +2,11 @@
  * vramfit -- will this model run on my machine, and how fast?
  *
  * Public library surface. The arithmetic is pure: plain data in, plain data
- * out, no network, no global state. The only I/O in the package is the lazy,
- * memoised read of the bundled `data/*.json` database exposed below, and it
- * only happens if you ask for a bundled model or device by name.
+ * out, no network, no global state. The I/O in the package is local and
+ * explicit: the lazy, memoised read of the bundled `data/*.json` database
+ * exposed below, which only happens if you ask for a bundled model or device
+ * by name, and the readers that open a GGUF or HuggingFace checkpoint you
+ * point them at. Nothing here downloads anything, ever.
  */
 
 export type {
@@ -30,6 +32,40 @@ export {
   parseDeviceSpec,
   parseModelSpec,
 } from "./db/index.js";
+
+export {
+  GGML_TYPES,
+  GGUF_FILE_TYPES,
+  GGUF_MAGIC,
+  GGUF_TYPE_NAMES,
+  GgufError,
+  SUPPORTED_GGUF_VERSIONS,
+  describeGguf,
+  findGgmlType,
+  ggmlBitsPerWeight,
+  ggmlTensorBytes,
+  ggufArchitecture,
+  ggufFileType,
+  isGgufArray,
+  modelFromGguf,
+  openByteSource,
+  quantFromGguf,
+  readGgufFile,
+  readGgufHeader,
+} from "./gguf/index.js";
+export type {
+  ByteSource,
+  FileByteSource,
+  GgmlTypeSpec,
+  GgufArray,
+  GgufHeader,
+  GgufModel,
+  GgufModelOptions,
+  GgufReadOptions,
+  GgufTensorInfo,
+  GgufTypeName,
+  GgufValue,
+} from "./gguf/index.js";
 
 export type {
   Capacity,
