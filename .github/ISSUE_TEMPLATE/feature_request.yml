@@ -1,0 +1,70 @@
+name: Feature request
+description: A new device, a new model, a new formula, or a change to the CLI.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        vramfit stays small on purpose: arithmetic you can check, zero runtime
+        dependencies, no network. Proposals are judged against that first.
+
+        Adding a device or a model to the bundled database is the easiest kind of
+        request to accept — as long as every figure has a primary source.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change is this?
+      options:
+        - A device for the bundled database
+        - A model for the bundled database
+        - A quantization format
+        - A change to the memory or throughput arithmetic
+        - A CLI or output change
+        - A library API change
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What question can you not answer today? Be concrete.
+      placeholder: I run a Radeon W7900 and there is no bundled device for it, so I have to hand-write a device JSON every time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: |
+        For a device: memory in GiB, memory bandwidth in GB/s, dense FP16 TFLOPs,
+        and the device family. For a model: `n_layers`, `n_kv_heads`, `head_dim`,
+        hidden size, FFN hidden, vocabulary size, total and active parameters.
+        For arithmetic: the formula and its assumption.
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: Sources
+      description: |
+        Link every figure to a primary source — a vendor datasheet, the model's
+        published `config.json`, or a benchmark table with its conditions stated.
+        Entries without sources cannot be merged.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This can be implemented without adding a runtime dependency.
+          required: true
+        - label: This can be implemented without any network access at runtime or in tests.
+          required: true
