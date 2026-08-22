@@ -1,0 +1,18 @@
+version: 2
+
+updates:
+  # The package ships zero runtime dependencies, so this only ever touches the
+  # toolchain: typescript, vitest, oxlint and @types/node.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
