@@ -11,14 +11,13 @@
     "perf": "deny"
   },
   "rules": {
-    "no-console": "off",
     "eqeqeq": "error",
     "no-var": "error",
     "prefer-const": "error",
+    "no-unused-vars": "error",
     "typescript/no-explicit-any": "error",
     "unicorn/prefer-node-protocol": "error",
     "unicorn/no-array-reduce": "off",
-    "unicorn/prevent-abbreviations": "off",
     "unicorn/no-null": "off"
   },
   "ignorePatterns": ["dist/**", "node_modules/**"]
