@@ -82,8 +82,9 @@ MODEL AND DEVICE
       --device-json <path> Use a device spec from a JSON file instead.
 
 CONFIGURATION
-  -q, --quant <id>         Weight quantization (default q4_k_m). f16, q8_0,
-                           q6_k, q5_k_m, q4_k_m, q4_k_s, q3_k_m, q2_k, mxfp4,
+  -q, --quant <id>         Weight quantization. Defaults to the format the
+                           model ships in, else q4_k_m. f16, q8_0, q6_k,
+                           q5_k_m, q4_k_m, q4_k_s, q3_k_m, q2_k, mxfp4,
                            awq-4bit, gptq-4bit and friends.
   -c, --ctx <n>            Context length; accepts 32768 or 32k. Defaults to
                            the model's own default.
@@ -251,7 +252,10 @@ function runCheck(args: Args, io: Io, version: string): number {
 
   const model = resolveModel(args, io);
   const device = resolveDevice(args, io);
-  const quant = getQuant(args.string("quant") ?? "q4_k_m");
+  // A model released in its own quantization is checked in that format unless
+  // the user asks for another: modelling gpt-oss at Q4_K_M describes a file
+  // nobody publishes.
+  const quant = getQuant(args.string("quant") ?? model.nativeQuant ?? "q4_k_m");
   const options = fitOptions(args);
 
   const fit = checkFit(model, quant, device, options);

@@ -294,6 +294,32 @@ describe("quantization search", () => {
     expect(awq.map((option) => option.quant.id).toSorted()).toEqual(["awq-4bit", "gptq-4bit"]);
   });
 
+  it("offers the format a natively-quantized model actually ships in", () => {
+    // gpt-oss is released as MXFP4; a Q8_0 of it is twice the bytes for weights
+    // that were never wider than 4.25 bits. Recommending Q8_0 at 20.70 GiB over
+    // the 11.93 GiB file OpenAI publishes is the wrong answer twice over.
+    const options = evaluateQuants(getModel("gpt-oss-20b"), getDevice("rtx-4090"), {
+      ctx: 8192,
+    });
+    expect(options[0]?.quant.id).toBe("mxfp4");
+    expect(options.map((option) => option.quant.id)).not.toContain("q8_0");
+    for (const option of options) {
+      expect(option.quant.bitsPerWeight, option.quant.label).toBeLessThanOrEqual(4.25);
+    }
+
+    const best = recommendQuant(getModel("gpt-oss-20b"), getDevice("rtx-4090"), { ctx: 8192 });
+    expect(best?.quant.id).toBe("mxfp4");
+    expect(bytesToGiB(best?.fit.footprint.weights.totalBytes ?? 0)).toBeLessThan(13);
+  });
+
+  it("leaves the GGUF lineup alone for a model with no native format", () => {
+    const ids = evaluateQuants(getModel("llama-3.1-8b"), getDevice("rtx-4090")).map(
+      (option) => option.quant.id,
+    );
+    expect(ids).not.toContain("mxfp4");
+    expect(ids[0]).toBe("f16");
+  });
+
   it("finds nothing when the model is far too large for the device", () => {
     expect(recommendQuant(getModel("qwen3-235b-a22b"), getDevice("rtx-3060-12gb"))).toBeUndefined();
   });

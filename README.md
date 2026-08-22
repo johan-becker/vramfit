@@ -322,7 +322,7 @@ Notes
 | Option | Meaning |
 | --- | --- |
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
-| `-q, --quant <id>` | Weight quantization, default `q4_k_m` |
+| `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
 | `-g, --gpus <n>` | Identical devices sharing the model, default 1 |
@@ -410,10 +410,17 @@ vramfit check --model-json ./my-finetune.json --device-json ./my-gpu.json --ctx 
 ```
 
 User-supplied specs go through the same validator as the bundled data, which
-enforces the invariants that keep the arithmetic honest — query heads must
+enforces the invariants that keep the arithmetic honest — the declared
+parameter count has to match the count the shape fields imply, query heads must
 divide evenly into KV head groups, an MLA model must carry MLA geometry, a
 router cannot pick more experts than exist — and names the exact field path
 when they do not.
+
+A model released in a quantization of its own says so with `nativeQuant`, as
+the two gpt-oss entries do. That format is then the default for `check` and the
+top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
+an MXFP4 checkpoint is twice the bytes for weights that were never wider than
+4.25 bits.
 
 ## 7. Accuracy and limitations
 

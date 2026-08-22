@@ -214,6 +214,16 @@ describe("vramfit check", () => {
     expect(raised).not.toMatch(/iogpu\.wired_limit_mb/);
   });
 
+  it("checks a natively-quantized model in the format it ships in", () => {
+    const { io } = invoke(["check", "gpt-oss-20b", "-d", "4090", "--ctx", "8k"]);
+    expect(io.output).toMatch(/gpt-oss 20B {2}\| {2}MXFP4/);
+    expect(io.output).toMatch(/Weights\s+11\.9\d GiB/);
+    // An explicit --quant still wins: the tool answers the question asked.
+    expect(invoke(["check", "gpt-oss-20b", "-d", "4090", "-q", "q8_0"]).io.output).toMatch(
+      /gpt-oss 20B {2}\| {2}Q8_0/,
+    );
+  });
+
   it("describes latent attention and sliding windows in the cache line", () => {
     expect(invoke(["check", "deepseek-v2-lite", "-d", "4090"]).io.output).toMatch(
       /27 layers x 576-wide latent \(MLA\)/,
@@ -373,6 +383,15 @@ describe("vramfit best", () => {
     expect(io.output).toMatch(/^F16\s+16\.00\s+14\.96 GiB\s+\S+ GiB\s+no/m);
     expect(io.output).toMatch(/^Q8_0\s+8\.50\s+7\.95 GiB\s+\S+ GiB\s+yes/m);
     expect(io.output).toMatch(/Recommended: Q8_0 -- highest quality that fits at 16K/);
+  });
+
+  it("says why a natively-quantized model has a shorter table", () => {
+    const { code, io } = invoke(["best", "gpt-oss-20b", "-d", "4090", "--ctx", "8k"]);
+    expect(code).toBe(EXIT_OK);
+    expect(io.output).toMatch(/^MXFP4\s+4\.25/m);
+    expect(io.output).not.toMatch(/^Q8_0/m);
+    expect(io.output).toMatch(/Recommended: MXFP4/);
+    expect(io.output).toMatch(/ships in MXFP4/);
   });
 
   it("lists candidates best quality first", () => {
