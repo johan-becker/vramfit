@@ -1,0 +1,82 @@
+name: Bug report
+description: A wrong number, a crash, or behaviour that does not match the README.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things make a vramfit bug report easy to act on:
+        the exact command you ran, and — if this is about a number being wrong —
+        what the number should be and where you got it.
+
+        Please do not report security issues here. See
+        [SECURITY.md](https://github.com/johan-becker/vramfit/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or code
+      description: The exact CLI invocation or the library call.
+      placeholder: vramfit check llama-3.1-8b --device 4090 --ctx 32k
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the full output, including the exit code if it matters.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: |
+        If a figure is wrong, say what it should be and cite the source: a GGUF
+        file listing, a `config.json`, a vendor datasheet, or your own measurement
+        with the runtime and flags you used. "It felt too high" is hard to act on;
+        "llama.cpp reports 61 tok/s with these flags" is easy.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: vramfit version
+      description: Output of `vramfit --version`, or the commit you built from.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version and OS
+      description: Output of `node --version`, plus your operating system.
+      placeholder: v22.11.0 on macOS 15.1 (arm64)
+    validations:
+      required: true
+
+  - type: textarea
+    id: spec
+    attributes:
+      label: Custom model or device spec
+      description: If you used `--model-json` or `--device-json`, paste the file.
+      render: json
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked that this is not one of the documented limitations in README section 7.
+          required: true
+        - label: I am reporting one problem, not a list.
+          required: true
