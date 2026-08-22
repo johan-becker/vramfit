@@ -346,11 +346,11 @@ happens, and neither reader touches the network.
 ### 6.1 A GGUF file
 
 ```console
-$ vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
+$ vramfit check ./scratch/llama-3.1-8b-q4_k_m.gguf -d 4090 --ctx 32k
 Meta Llama 3.1 8B Instruct  |  Q4_K_M  |  NVIDIA RTX 4090
 =========================================================
 
-Read from ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf  (GGUF v3, 292 tensors, llama architecture, Q4_K_M)
+Read from ./scratch/llama-3.1-8b-q4_k_m.gguf  (GGUF v3, 292 tensors, llama architecture, Q4_K_M)
 
 FITS  -  9.67 GiB of 24.00 GiB used, 14.33 GiB free (40% utilised)
 
@@ -366,8 +366,8 @@ Memory
   █ weights 4.82   ▓ KV 4.00   ▒ overhead 0.85   ░ free 14.33   (GiB)
 
 Capacity
-  Largest context that fits    128K  the architecture's own maximum
-  Best quant that fits at 32K   F16  14.96 GiB of weights, 39.2 tok/s
+  Largest context that fits      128K  the architecture's own maximum
+  Best quant that fits at 32K  Q4_K_M  4.82 GiB of weights, 66.0 tok/s
 
 Speed (estimates: decode +/-25%, prefill +/-40%)
   Decode               66.0 tok/s  at 32K context, 1 sequence
@@ -375,13 +375,29 @@ Speed (estimates: decode +/-25%, prefill +/-40%)
   Time to first token      13.4 s  for a prompt of 32K tokens
 ```
 
+That file is a local artefact and the transcript says so: it is the synthetic
+Q4_K_M-shaped header `test/gguf-fixtures.ts` writes, built to a Llama 3.1 8B's
+shapes so the arithmetic can be checked against a file whose every byte is
+accounted for. A real `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` promotes only a
+subset of the attention-V and FFN-down tensors rather than all of them, so it
+comes out slightly narrower — around 4.58 GiB at 4.90 bpw, which is the 4.92 GB
+the size table in [section 4](#4-how-it-works) checks the predictions against.
+
 Every number in that report is **measured, not looked up**. The parameter
 count is summed from the file's own shape table — all 292 tensors, including
 the norms a published "8B" rounds away — and the bits per weight are computed
-from the ggml type of each tensor, separately for the transformer blocks
-(`Q4_K` at 144 bytes per 256 weights), the token embedding table and the
-output head (`Q6_K` at 210). Feed those back into `computeWeightBytes` and the
-result comes back to the byte, because the prediction *is* the file.
+from the ggml type of each tensor, separately for the transformer blocks, the
+token embedding table and the output head. The blocks are themselves a mix,
+which is what the `_M` in `Q4_K_M` means: most tensors at `Q4_K` (144 bytes per
+256 weights, 4.5 bpw), attention V and the FFN down projection promoted to
+`Q6_K` (210 bytes, 6.5625 bpw), and the output head at `Q6_K` as well. That is
+why the block rate comes out above `Q4_K`'s own. Feed the per-tensor types back
+into `computeWeightBytes` and the result comes back to the byte, because the
+prediction *is* the file.
+
+`best` on the same file lists that format and the narrower ones only: there is
+no F16 to be had from a Q4_K_M checkpoint, and every wider quantization of it
+would be a larger file holding the same weights.
 
 The reader is streaming: it pulls a window at a time and skips everything it
 does not need — a tokenizer's 128k-entry token list and all of the tensor
@@ -479,7 +495,9 @@ Three commands for the questions that need more than one `check`.
 
 One model, every device you might use, ranked. What fits comes before what
 does not, then fastest first, because once a configuration fits, decode speed
-is what you actually feel. `4090x2` means two of them.
+is what you actually feel. `4090x2` means two of them; an entry that names a
+device is taken whole first, so the aliases that end in a digit (`rtx4090`)
+still resolve, and an entry with no count of its own takes `--gpus`.
 
 ```console
 $ vramfit compare llama-3.3-70b --devices 4090,4090x2,a100-80,m3-ultra,3090x2 --ctx 8k
@@ -641,22 +659,30 @@ Launch
     FROM llama-3.3-70b
     PARAMETER num_gpu 44
     PARAMETER num_ctx 8192
+
+  Ollama  (environment, not the Modelfile)
     OLLAMA_FLASH_ATTENTION=1
 
   vLLM
-    vllm serve <org/model> --max-model-len 8192 --gpu-memory-utilization 0.95 --quantization gguf
+    vllm serve <org/model> --max-model-len 8192 --gpu-memory-utilization 0.95
 
-  - -ngl 44 leaves 36 of 80 layers on the CPU. That is the most that fits; a
-    higher number will load and then run out of memory.
+  - -ngl 44 (num_gpu to Ollama) leaves 36 of 80 layers on the CPU. That is the
+    most that fits; a higher number will load and then run out of memory.
   - vLLM does not offload to system RAM: these flags describe the memory
     budget, not a configuration it can serve.
   - --gpu-memory-utilization is capped at 0.95: this deployment wants 181% of
     the card, and above 95% there is no room left for CUDA graph capture and
     allocator fragmentation.
-  - vLLM's GGUF loader is experimental and single-file only; the usual path is
-    to serve the safetensors checkpoint and let --quantization pick the
-    kernel.
+  - vLLM cannot load a llama.cpp Q4_K_M mix out of a repository, so no
+    --quantization is given: the figures above describe the memory budget of
+    the equivalent GGUF deployment rather than a format vLLM names.
 ```
+
+The Modelfile block holds Modelfile commands and nothing else. Ollama keeps
+flash attention, the cache type and the parallelism in its process
+environment, so they are printed under their own heading rather than inside a
+file `ollama create` would reject. Naming one runtime -- `--launcher ollama`
+-- narrows the notes to that runtime as well as the commands.
 
 ### 8.1 The three runtimes
 
@@ -686,25 +712,33 @@ path that would look right and fail. Check the file instead and the flags come
 out ready to run:
 
 ```console
-$ vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 8k --launcher
+$ vramfit check ./scratch/llama-3.1-8b-q4_k_m.gguf -d 4090 --ctx 8k --launcher
 ...
 Launch
   llama.cpp
-    llama-server -m ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 33 -c 8192 -fa on
+    llama-server -m ./scratch/llama-3.1-8b-q4_k_m.gguf -ngl 33 -c 8192 -fa on
 
   Ollama  (Modelfile)
-    FROM ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
+    FROM ./scratch/llama-3.1-8b-q4_k_m.gguf
     PARAMETER num_gpu 33
     PARAMETER num_ctx 8192
+
+  Ollama  (environment, not the Modelfile)
     OLLAMA_FLASH_ATTENTION=1
 
   vLLM
-    vllm serve ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf --max-model-len 8192 --gpu-memory-utilization 0.28 --quantization gguf
+    vllm serve ./scratch/llama-3.1-8b-q4_k_m.gguf --max-model-len 8192 --gpu-memory-utilization 0.28 --quantization gguf
 
   - vLLM's GGUF loader is experimental and single-file only; the usual path is
     to serve the safetensors checkpoint and let --quantization pick the
     kernel.
 ```
+
+`--quantization gguf` appears here and not above because here vLLM is being
+handed the GGUF itself. Given a safetensors directory or a repository id, the
+same k-quant mix gets no `--quantization` at all and a note saying why: the
+flag describes the file, and vLLM cannot load a llama.cpp mix out of anything
+else.
 
 That `-ngl 33` is the model's 32 blocks plus the one llama.cpp counts for the
 output tensors, and the vLLM fraction is this deployment's 6.67 GiB over the
@@ -828,7 +862,8 @@ The cells come from the same place the terminal table's do, so the two cannot
 drift apart. Only three things change shape: the memory bar, the launch flags
 and the `--explain` block are fixed-width, so they go inside fences — and the
 last of those folds into a `<details>` block so the report above it stays
-readable. `recommend --markdown` gains a trade-off column, which a terminal
+readable. Each launch fence keeps the runtime label the terminal prints above
+it, because which runtime a block is for is content rather than shape. `recommend --markdown` gains a trade-off column, which a terminal
 has no room for. `--json` and `--markdown` together are refused rather than
 one quietly winning.
 
@@ -859,7 +894,7 @@ HuggingFace checkpoint directory. Both are read from their own headers.
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
 | `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
 | `--hf-config <path>` | Read the model from a HuggingFace checkpoint directory or its `config.json`; a safetensors index beside it gives the true parameter count |
-| `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max` |
+| `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max`. An entry that names a device is taken whole, so an alias ending in a digit (`rtx4090`) is not mistaken for a count; one without a count of its own takes `--gpus` |
 | `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
 | `--limit <n>` | `recommend` only: show the top n |
 | `--config <path>` | `fleet` only: the JSON description of the machines and the models |
@@ -1022,6 +1057,11 @@ top of the `best` table, and wider quantizations of it are left out: a Q8_0 of
 an MXFP4 checkpoint is twice the bytes for weights that were never wider than
 4.25 bits.
 
+A GGUF file is that case measured rather than declared, and is treated the same
+way: the format it is in tops its own `best` table at the bits per weight read
+off its tensor table, and `check`'s *Best quant that fits* line names it. There
+is no F16 to be had from a Q4_K_M file.
+
 ## 11. Accuracy and limitations
 
 - Memory figures are **arithmetic**, and only as good as their inputs. Weight
@@ -1056,7 +1096,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 464 tests across 23 files
+npm test           # vitest -- 488 tests across 23 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 

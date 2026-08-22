@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`compare` and device names that end in a digit.** The `xN` count suffix was
+  split off before the name was looked up, so `--devices rtx4090` became an
+  unknown device `"rt"` -- a spelling `check -d` accepts, and six bundled
+  aliases and four names have that shape. The whole token is now resolved as a
+  name first.
+- **`compare --gpus`.** The flag is in `compare`'s own vocabulary and was then
+  overwritten by the per-entry default of 1, so `compare llama-3.3-70b
+  --devices rtx-4090 --gpus 2` exited 1 where `check` with the same arguments
+  exited 0. An entry with no count of its own now takes it.
+- **`tie_word_embeddings` absent means tied**, matching `PretrainedConfig`'s
+  default. Reading it as untied charged a second `vocab x hidden` matrix that
+  is not on disk: +22.6% of the parameters of a gemma-2-2b, and a safetensors
+  cross-check that then failed and blamed a vision tower for it.
+- **A bare `sliding_window` windows every layer**, which is what the field
+  means in transformers. Modelling it as Gemma 2's alternation put Mistral 7B's
+  32K cache at 2.25 GiB against llama.cpp's 4.00 GiB -- the dangerous
+  direction. `AttentionWindowSpec.fullAttentionEvery` is nullable for it, both
+  readers say so in the notes, and a `layer_types` list that is not one
+  repeating pattern is sized without a window instead of assuming a period.
+- **`--explain`'s compute buffer** printed an expression with no per-device
+  factor beside a value that has one: on a two-card fit the arithmetic came to
+  half the number next to it.
+- **The weight-count note has a direction.** Weight files smaller than the
+  decoder derivation cannot be an extra head, and are no longer explained as
+  one.
+- **Nested GGUF arrays are bounded** (`maxArrayDepth`). A 1.2 MB header nested
+  100,000 deep threw a `RangeError` past every handler, with no file name and
+  no help line.
+- **The Ollama block holds Modelfile commands only.** `OLLAMA_FLASH_ATTENTION`,
+  `OLLAMA_KV_CACHE_TYPE` and the parallelism (now `OLLAMA_NUM_PARALLEL`, which
+  is not a `PARAMETER`) are printed under their own heading, so the block can
+  be pasted into a Modelfile as invited.
+- **`OLLAMA_KV_CACHE_TYPE` is only printed for the types Ollama takes** -- f16,
+  q8_0, q4_0. `--kv-quant q5_1`, `q5_0` and `q4_1` produced a value its daemon
+  rejects; they now print none and say why.
+- **`--quantization gguf` only when vLLM is serving the GGUF.** A safetensors
+  directory or a repository id got a flag contradicting the note printed under
+  it.
+- **`--launcher <runtime>` filters the notes too**, so naming one runtime no
+  longer leads with three notes about another and a flag name absent from the
+  output.
+- **`--markdown` keeps the runtime labels** above each launch fence.
+- **`best` and `check` respect the format a file is already in.** A Q4_K_M GGUF
+  was offered F16, BF16, Q8_0, Q6_K and both Q5_Ks and recommended F16; `best`
+  also sized its row from the table's nominal 4.83 bits per weight while
+  `check` sized the same file from its own 5.10, so the two commands reported
+  totals 4.3% apart for one checkpoint.
+- **`--color` / `--no-color` work on `fleet`, `devices` and `models`**, which
+  the README's options table never scoped away from them, and a rejected flag
+  is now quoted the way it was typed rather than after normalisation.
+- **The `recommend` trade-off lines up with its column** at ten rows or more,
+  which is the unlimited form the quickstart uses.
+- **A directory pointed at the GGUF reader is named**, instead of a bare
+  `EISDIR` with no path and no help line.
+- **Two model sources are refused**, the way `--json` with `--markdown` is: a
+  positional model with `--gguf` silently reported on the file and never
+  mentioned dropping the other.
+
+### Changed
+
+- The GGUF transcripts in the README name a local artefact and say that they
+  come from the synthetic header the test fixtures build, with the figure a
+  real conversion of the same model produces beside them.
+
 ## [0.2.0] - 2026-08-22
 
 The question was "will this model fit on this device". This release answers it
