@@ -844,16 +844,16 @@ HuggingFace checkpoint directory. Both are read from their own headers.
 | --- | --- |
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
 | `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
-| `--hf-config <path>` | Read the model from a HuggingFace `config.json`; a safetensors index beside it gives the true parameter count |
+| `--hf-config <path>` | Read the model from a HuggingFace checkpoint directory or its `config.json`; a safetensors index beside it gives the true parameter count |
 | `--devices <list>` | `compare` only: comma-separated devices, each with an optional count — `4090,3090x2,m4-max` |
 | `--use-case <id>` | `recommend` only: `chat`, `code` or `long-context`. Sets the context to check at and the decode speed to clear |
 | `--limit <n>` | `recommend` only: show the top n |
 | `--config <path>` | `fleet` only: the JSON description of the machines and the models |
-| `--launcher [runtime]` | Print the exact flags this fit implies: `llama.cpp`, `ollama`, `vllm`, or all three |
-| `--ngl` | Print only the llama.cpp `-ngl` value and exit, for a shell substitution |
-| `--explain` | Show every headline number with the arithmetic that produced it |
-| `--markdown` | Markdown tables, for pasting into an issue. Mutually exclusive with `--json` |
-| `--color` / `--no-color` | Force ANSI colour on or off; the default follows the terminal, and `NO_COLOR` is honoured |
+| `--launcher [runtime]` | `check` only: print the exact flags this fit implies -- `llama.cpp`, `ollama`, `vllm`, or all three |
+| `--ngl` | `check` only: print the llama.cpp `-ngl` value and nothing else, for a shell substitution |
+| `--explain` | `check` only: show every headline number with the arithmetic that produced it |
+| `--markdown` | Markdown tables on any command, for pasting into an issue. Mutually exclusive with `--json` |
+| `--color` / `--no-color` | Force ANSI colour on or off; the default follows the terminal, and `NO_COLOR`, `FORCE_COLOR` and `TERM=dumb` are honoured |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
