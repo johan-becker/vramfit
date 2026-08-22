@@ -174,6 +174,28 @@ describe("checkFit: partial offload", () => {
     expect(fit.offload?.systemRamAvailableBytes).toBe(64 * GIB);
   });
 
+  it("applies --efficiency to the device side only, never to system RAM", () => {
+    // An efficiency figure is calibrated by measuring a GPU-resident run, so
+    // raising it must not also speed up the DDR5 side of a split -- which the
+    // harmonic blend is dominated by. Applying it to both turned 2.22 tok/s
+    // into 4.02 tok/s, an 81% inflation from calibrating the fast path.
+    const options = { ctx: 4096, systemRamGiB: 128 };
+    const derived = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), options);
+    const calibrated = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), {
+      ...options,
+      efficiency: 0.95,
+    });
+
+    expect(derived.offload).not.toBeNull();
+    expect(calibrated.offload?.plan.cpuLayers).toBeGreaterThan(0);
+    const ratio =
+      calibrated.throughput.decode.tokensPerSecond / derived.throughput.decode.tokensPerSecond;
+    expect(ratio).toBeGreaterThan(1);
+    expect(ratio).toBeLessThan(1.15);
+    // The blended efficiency stays pulled down by the host's derived figure.
+    expect(calibrated.offload?.bandwidth.efficiency).toBeLessThan(0.7);
+  });
+
   it("assumes a stated default amount of system RAM when not told", () => {
     const assumed = checkFit(getModel("llama-3.3-70b"), Q4, getDevice("rtx-4090"), {
       ctx: 8192,

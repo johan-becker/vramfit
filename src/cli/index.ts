@@ -100,7 +100,7 @@ OFFLOAD (used when the model does not fit)
       --ram-bandwidth <GB/s>   System RAM bandwidth (default 89.6, DDR5-5600).
       --cpu-tflops <n>     CPU dense FP16 throughput, for offloaded prefill.
 
-CALIBRATION
+CALIBRATION (device side only; offloaded layers keep their derived figures)
       --efficiency <0-1>       Override the memory-bandwidth efficiency.
       --prefill-efficiency <0-1>  Override the prefill MFU.
 
