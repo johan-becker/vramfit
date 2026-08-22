@@ -155,7 +155,14 @@ function loadJsonFile<T>(
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (cause) {
-    throw new UsageError(`${path} is not valid JSON: ${(cause as Error).message}`);
+    // V8's JSON.parse message quotes the first bytes of the input, so passing
+    // it through would print the head of whatever file was named -- a mistyped
+    // path in a CI step should not echo a secrets file into the build log.
+    // Keep the position it reports, drop the excerpt.
+    const at = /in JSON at (position \d+(?: \(line \d+ column \d+\))?)/.exec(
+      (cause as Error).message,
+    );
+    throw new UsageError(`${path} is not valid JSON${at ? ` (${at[1]})` : ""}`);
   }
   return parse(parsed, path);
 }
