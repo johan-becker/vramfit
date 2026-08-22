@@ -1,7 +1,10 @@
+import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
+import type { FleetMachine, FleetReport } from "../fleet.js";
 import { findQuant } from "../quant.js";
-import type { DeviceSpec, ModelSpec } from "../types.js";
-import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
+import type { Recommendation, UseCaseProfile } from "../recommend.js";
+import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
+import { GIB, bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import type { ResolvedModel } from "./source.js";
 import {
   formatBandwidth,
@@ -476,4 +479,353 @@ export function renderModels(models: readonly ModelSpec[]): string[] {
           : "GQA",
     ]),
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* compare                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** How a device is named in a table: "RTX 4090" or "2 x RTX 4090". */
+function deviceLabel(comparison: DeviceComparison): string {
+  return comparison.gpus > 1
+    ? `${comparison.gpus} x ${comparison.device.name}`
+    : comparison.device.name;
+}
+
+/** The `vramfit compare` table: one model, every device, best first. */
+export function renderCompare(
+  model: ModelSpec,
+  quant: QuantSpec,
+  rows: readonly DeviceComparison[],
+  ctx: number,
+  report: ReportOptions = {},
+): string[] {
+  const heading = `${model.name}  |  ${quant.label}  |  ${formatContext(ctx)} context`;
+  const starved = rows.find((row) => row.fit.offload !== null && !row.fit.offload.feasible);
+
+  const table = renderTable(
+    [
+      { header: "" },
+      { header: "Device" },
+      { header: "Memory", align: "right" },
+      { header: "Needed", align: "right" },
+      { header: "Free", align: "right" },
+      { header: "Fits", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows.map((row) => [
+      row.best ? "->" : "",
+      deviceLabel(row),
+      formatBytes(row.fit.capacity.totalBytes),
+      formatBytes(row.fit.usedBytes),
+      formatBytes(row.headroomBytes),
+      row.fit.fits ? "yes" : "no",
+      row.fit.maxContext > 0 ? formatContext(row.fit.maxContext) : "-",
+      `${formatRate(row.decodeTokensPerSecond)}${
+        row.fit.offload !== null && !row.fit.offload.feasible ? " *" : ""
+      }`,
+    ]),
+  );
+
+  const best = rows.find((row) => row.best);
+  // Nothing fits: the ranking put the row that came closest first.
+  const closest = rows[0];
+
+  return [
+    heading,
+    "=".repeat(heading.length),
+    "",
+    ...sourceLines(report),
+    ...table,
+    "",
+    ...(rows.some((row) => !row.fit.fits)
+      ? wrap(
+          "Rows that do not fit show the decode speed with as many layers as possible offloaded to system RAM, which is what you would actually get.",
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(starved
+      ? wrap(
+          `* the offloaded remainder needs more system RAM than the ${formatBytes(starved.fit.offload?.systemRamAvailableBytes ?? 0)} assumed here, so that row would not load at all. Say what you have with --ram.`,
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(best
+      ? wrap(
+          `Best: ${deviceLabel(best)} -- ${formatRate(best.decodeTokensPerSecond)} at ${formatContext(ctx)} with ${formatBytes(best.headroomBytes)} to spare, and room for ${formatContext(best.fit.maxContext)} of context.`,
+          WRAP_WIDTH,
+        )
+      : wrap(
+          `Nothing here fits ${model.name} at ${quant.label} and ${formatContext(ctx)} context.${
+            closest === undefined
+              ? ""
+              : ` ${deviceLabel(closest)} came closest, ${formatBytes(-closest.headroomBytes)} short -- a narrower quantization or a shorter context is the cheaper fix than more hardware.`
+          }`,
+          WRAP_WIDTH,
+        )),
+  ];
+}
+
+/** The `vramfit compare --json` payload. */
+export function compareJson(
+  model: ModelSpec,
+  quant: QuantSpec,
+  rows: readonly DeviceComparison[],
+  ctx: number,
+  version: string,
+): unknown {
+  return {
+    vramfit: version,
+    model: { id: model.id, name: model.name, totalParams: model.totalParams },
+    config: { quant: quant.id, ctx },
+    best: rows.find((row) => row.best)?.device.id ?? null,
+    devices: rows.map((row) => ({
+      id: row.device.id,
+      name: row.device.name,
+      count: row.gpus,
+      capacityBytes: row.fit.capacity.totalBytes,
+      totalBytes: row.fit.usedBytes,
+      headroomBytes: row.headroomBytes,
+      utilization: row.fit.utilization,
+      fits: row.fit.fits,
+      maxContext: row.fit.maxContext,
+      decodeTokensPerSecond: row.decodeTokensPerSecond,
+      offloadFeasible: row.fit.offload === null || row.fit.offload.feasible,
+      best: row.best,
+    })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* recommend                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The `vramfit recommend` list.
+ *
+ * An aligned table would fit more rows on a screen and answer less: the point
+ * of the command is the trade-off, not the ranking, so each row carries its
+ * own sentence underneath. The header line is still produced by `renderTable`,
+ * so the columns line up across rows that have prose between them.
+ */
+export function renderRecommend(
+  device: DeviceSpec,
+  profile: UseCaseProfile,
+  rows: readonly Recommendation[],
+  ctx: number,
+  gpus: number,
+): string[] {
+  const deviceName = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  const heading = `${deviceName}  |  ${profile.label}  |  ${formatContext(ctx)} context`;
+  const lines = [heading, "=".repeat(heading.length), ""];
+
+  if (rows.length === 0) {
+    return [
+      ...lines,
+      ...wrap(
+        `Nothing in the bundled database fits ${deviceName} at ${formatContext(ctx)} of context, even at Q2_K. Reduce the context with --ctx, quantize the cache with --kv-quant q8_0, or run "vramfit check <model> -d ${device.id}" to see what a partial offload would cost.`,
+        WRAP_WIDTH,
+      ),
+    ];
+  }
+
+  const table = renderTable(
+    [
+      { header: "#", align: "right" },
+      { header: "Model" },
+      { header: "Params", align: "right" },
+      { header: "Quant" },
+      { header: "Total", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows.map((row, index) => [
+      `${index + 1}.`,
+      row.model.name,
+      formatParams(row.model.totalParams),
+      row.quant.label,
+      formatBytes(row.fit.footprint.totalBytes),
+      formatContext(row.maxContext),
+      formatRate(row.decodeTokensPerSecond),
+    ]),
+  );
+
+  const [header, separator, ...body] = table;
+  lines.push(header as string, separator as string);
+  body.forEach((line, index) => {
+    const row = rows[index];
+    lines.push(line, ...(row === undefined ? [] : wrap(row.tradeoff, WRAP_WIDTH, "    ")), "");
+  });
+
+  lines.push(
+    ...wrap(
+      `Ranked by parameter count on a log scale, times a quantization-quality factor, times decode speed against ${profile.comfortableDecode} tok/s -- ${profile.why}. vramfit has no benchmark data and does not rank models by how good they are at anything.`,
+      WRAP_WIDTH,
+    ),
+  );
+  return lines;
+}
+
+/** The `vramfit recommend --json` payload. */
+export function recommendJson(
+  device: DeviceSpec,
+  profile: UseCaseProfile,
+  rows: readonly Recommendation[],
+  ctx: number,
+  gpus: number,
+  version: string,
+): unknown {
+  return {
+    vramfit: version,
+    device: { id: device.id, name: device.name, vramGiB: device.vramGiB, count: gpus },
+    useCase: {
+      id: profile.id,
+      comfortableDecodeTokensPerSecond: profile.comfortableDecode,
+      ctx,
+    },
+    models: rows.map((row) => ({
+      id: row.model.id,
+      name: row.model.name,
+      totalParams: row.model.totalParams,
+      activeParams: row.model.activeParams,
+      quant: row.quant.id,
+      totalBytes: row.fit.footprint.totalBytes,
+      headroomBytes: row.fit.headroomBytes,
+      maxContext: row.maxContext,
+      decodeTokensPerSecond: row.decodeTokensPerSecond,
+      score: row.score,
+      capability: row.capability,
+      quality: row.quality,
+      speed: row.speed,
+      tradeoff: row.tradeoff,
+    })),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* fleet                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** How a machine is described in the legend under the fleet table. */
+function machineLegend(machine: FleetMachine): string[] {
+  const device = machine.gpus > 1 ? `${machine.gpus} x ${machine.device.name}` : machine.device.name;
+  const capacity =
+    (machine.options.vramGiB ?? machine.device.vramGiB * machine.device.usableFraction) *
+    machine.gpus;
+  return [
+    machine.name,
+    device,
+    `${capacity.toFixed(capacity < 10 ? 1 : 0)} GiB`,
+    machine.options.systemRamGiB === undefined
+      ? "-"
+      : `${machine.options.systemRamGiB.toFixed(0)} GiB`,
+  ];
+}
+
+/**
+ * The `vramfit fleet` matrix: one row per model, one column per machine.
+ *
+ * The cell is the decode speed rather than a tick, because "yes" and "yes at
+ * 3 tok/s" are different answers and the second one is usually a no.
+ */
+export function renderFleet(report: FleetReport): string[] {
+  const columns = [
+    { header: "Model" },
+    { header: "Quant" },
+    { header: "Ctx", align: "right" as const },
+    { header: "Weights+KV", align: "right" as const },
+    ...report.machines.map((machine) => ({ header: machine.name, align: "right" as const })),
+    { header: "Served", align: "right" as const },
+  ];
+
+  const rows = report.rows.map((row) => [
+    row.entry.label,
+    row.entry.quant.label,
+    formatContext(row.entry.ctx),
+    // Weights and cache are the same on every machine; the runtime context
+    // and compute buffer are charged per device and so differ between them.
+    // Showing one machine's total in a shared column would misreport the rest.
+    formatBytes(
+      (row.cells[0]?.fit.footprint.weights.totalBytes ?? 0) +
+        (row.cells[0]?.fit.footprint.kv.totalBytes ?? 0),
+    ),
+    ...row.cells.map((cell) => (cell.fit.fits ? formatRate(cell.fit.throughput.decode.tokensPerSecond) : "-")),
+    `${row.servedBy}/${report.machines.length}`,
+  ]);
+
+  const heading = `Fleet  |  ${report.machines.length} machines  |  ${report.rows.length} models`;
+  const lines = [heading, "=".repeat(heading.length), "", ...renderTable(columns, rows), ""];
+
+  lines.push(
+    "Machines",
+    ...renderTable(
+      [
+        { header: "Name" },
+        { header: "Device" },
+        { header: "Usable", align: "right" },
+        { header: "System RAM", align: "right" },
+      ],
+      report.machines.map(machineLegend),
+    ).map((line) => `  ${line}`.trimEnd()),
+    "",
+  );
+
+  if (report.unserved.length > 0) {
+    lines.push(
+      ...wrap(
+        `${report.unserved.length} of ${report.rows.length} models fit nowhere: ${report.unserved.map((row) => row.entry.label).join(", ")}. Run "vramfit check" against the largest machine to see what a partial offload or a narrower quantization would cost.`,
+        WRAP_WIDTH,
+      ),
+      "",
+    );
+  }
+  if (report.idle.length > 0) {
+    lines.push(
+      ...wrap(
+        `${report.idle.map((machine) => machine.name).join(", ")} ${report.idle.length === 1 ? "serves" : "serve"} nothing on this list.`,
+        WRAP_WIDTH,
+      ),
+      "",
+    );
+  }
+
+  lines.push(
+    ...wrap(
+      "A dash means the model does not fit in that machine's device memory. Weights+KV is what every machine holds in common; each also pays its own runtime context and compute buffer, once per device. Decode figures are estimates, +/-25%.",
+      WRAP_WIDTH,
+    ),
+  );
+  return lines;
+}
+
+/** The `vramfit fleet --json` payload. */
+export function fleetJson(report: FleetReport, version: string): unknown {
+  return {
+    vramfit: version,
+    machines: report.machines.map((machine) => ({
+      name: machine.name,
+      device: machine.device.id,
+      count: machine.gpus,
+      capacityBytes:
+        (machine.options.vramGiB ?? machine.device.vramGiB * machine.device.usableFraction) *
+        machine.gpus *
+        GIB,
+    })),
+    models: report.rows.map((row) => ({
+      label: row.entry.label,
+      id: row.entry.model.id,
+      quant: row.entry.quant.id,
+      ctx: row.entry.ctx,
+      servedBy: row.servedBy,
+      machines: row.cells.map((cell) => ({
+        name: cell.machine.name,
+        fits: cell.fit.fits,
+        totalBytes: cell.fit.usedBytes,
+        headroomBytes: cell.fit.headroomBytes,
+        maxContext: cell.fit.maxContext,
+        decodeTokensPerSecond: cell.fit.throughput.decode.tokensPerSecond,
+      })),
+    })),
+  };
 }
