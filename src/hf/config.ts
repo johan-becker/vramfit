@@ -281,6 +281,13 @@ const DEFAULT_CHECK_CONTEXT = 8192;
  * the vision tower as well as the decoder, and charging its parameters to the
  * decoder would report a model that does not exist. The decoder's own count
  * is used instead, and the difference is reported rather than swallowed.
+ *
+ * The excursion has a sign, and only one of the two directions can be an
+ * extra tower: weight files *smaller* than the derivation mean the derivation
+ * is wrong or the checkpoint is incomplete. The decoder's count is still what
+ * the report is sized from -- it is the larger of the two, and a header that
+ * lists only some of a repository's tensors would otherwise size an 8B model
+ * as a 1B -- but the note says which of the two it is.
  */
 const WEIGHT_COUNT_TOLERANCE = 0.05;
 
@@ -387,8 +394,11 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
       totalParams = weights.totalParams;
       paramSource = weights.source;
     } else {
+      const apart = `The weight files hold ${Math.round(weights.totalParams)} parameters but the text decoder in this config accounts for ${Math.round(derived.derivedTotalParams)} -- ${(drift * 100).toFixed(1)}% apart`;
       notes.push(
-        `The weight files hold ${Math.round(weights.totalParams)} parameters but the text decoder in this config accounts for ${Math.round(derived.derivedTotalParams)} -- ${(drift * 100).toFixed(1)}% apart, which usually means the checkpoint carries a vision tower or another head as well. Sized from the decoder; the rest would occupy memory too if you loaded it.`,
+        weights.totalParams > derived.derivedTotalParams
+          ? `${apart}, which usually means the checkpoint carries a vision tower or another head as well. Sized from the decoder; the rest would occupy memory too if you loaded it.`
+          : `${apart}, and fewer parameters on disk than the config implies cannot be an extra head: either the weight files are incomplete, or one of tie_word_embeddings, vocab_size and torch_dtype does not describe this checkpoint. Sized from the decoder, which is the larger of the two.`,
       );
     }
   }
