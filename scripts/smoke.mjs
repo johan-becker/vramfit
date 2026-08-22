@@ -81,6 +81,14 @@ const cases = [
     exit: 0,
     expect: [/Recommended: Q4_K_M/, /^Q4_K_M\s+4\.83/m],
   },
+  {
+    // "nothing in this range fits" is exit 1, the same code as check's, and
+    // the README's command table says so.
+    name: "best, nothing fits",
+    argv: ["best", "llama-3.3-70b", "-d", "3060"],
+    exit: 1,
+    expect: [/Nothing in this range fits/],
+  },
   { name: "devices", argv: ["devices"], exit: 0, expect: [/^rtx-4090\s+NVIDIA RTX 4090/m] },
   { name: "models", argv: ["models"], exit: 0, expect: [/^llama-3\.1-8b/m] },
   { name: "help", argv: ["--help"], exit: 0, expect: [/USAGE/] },

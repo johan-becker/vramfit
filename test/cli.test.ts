@@ -296,6 +296,26 @@ describe("vramfit check", () => {
     expect(memory.capacityBytes - memory.totalBytes).toBeCloseTo(memory.headroomBytes, 6);
   });
 
+  it("keeps the top-level JSON keys the README documents", () => {
+    // README section 6.4 lists these; the payload calls itself stable, so the
+    // set is pinned here rather than left to drift away from the docs.
+    const payload = JSON.parse(
+      invoke(["check", "llama-3.1-8b", "-d", "4090", "--json"]).io.output,
+    ) as Record<string, unknown>;
+    expect(Object.keys(payload)).toEqual([
+      "vramfit",
+      "fits",
+      "model",
+      "device",
+      "config",
+      "memory",
+      "capacity",
+      "throughput",
+      "offload",
+      "warnings",
+    ]);
+  });
+
   it("reports the offload split in JSON too", () => {
     const { code, io } = invoke([
       "check",
