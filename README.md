@@ -48,6 +48,7 @@ arithmetic and which are estimates with an error band.
 
 ```sh
 npx vramfit check llama-3.1-8b --device 4090 --ctx 32k   # no install
+npx vramfit check ./model.gguf --device 4090 --ctx 32k   # or read the file
 npm install -g vramfit                                    # CLI
 npm install vramfit                                       # library
 ```
@@ -322,9 +323,13 @@ Notes
 
 ### 6.2 Options
 
+`<model>` is a bundled id, name or alias — or the path to a GGUF file, which
+is read from its own header.
+
 | Option | Meaning |
 | --- | --- |
 | `-d, --device <id>` | Bundled device id, name or alias (`4090`, `"RTX 4090"`, `m3-max`) |
+| `--gguf <path>` | Read the model from a GGUF file whatever it is named; only the header is read |
 | `-q, --quant <id>` | Weight quantization; defaults to the format the model ships in (MXFP4 for gpt-oss), else `q4_k_m` |
 | `-c, --ctx <n>` | Context length; `32768` or `32k`. Defaults to the model's own default |
 | `-b, --batch <n>` | Concurrent sequences, default 1 |
@@ -372,7 +377,7 @@ keep their name and meaning.
 | --- | --- |
 | `vramfit` | Version that produced the payload |
 | `fits` | The verdict, matching the exit code |
-| `model` | `id`, `name`, `totalParams`, `activeParams`, `nLayers`, `nKvHeads`, `headDim`, `attention`, `moe` |
+| `model` | `id`, `name`, `origin` (`database`, `gguf`, `huggingface` or `json`), `from` (the path or id it was read from), `totalParams`, `activeParams`, `nLayers`, `nKvHeads`, `headDim`, `attention`, `moe` |
 | `device` | `id`, `name`, `family`, `vramGiB`, `bandwidthGBs`, `usableFraction`, `count` |
 | `config` | `quant`, `bitsPerWeight`, `effectiveBitsPerWeight`, `ctx`, `batch`, `kvQuant` |
 | `memory` | `weightsBytes`, `kvCacheBytes`, `runtimeContextBytes`, `activationBytes` — which sum to `totalBytes` — plus `capacityBytes`, `headroomBytes`, `utilization` |
@@ -449,6 +454,43 @@ The database is a convenience, not a limit. Anything matching `ModelSpec` /
 vramfit check --model-json ./my-finetune.json --device-json ./my-gpu.json --ctx 4k
 ```
 
+Better still, point it at the checkpoint and skip the database entirely:
+
+```console
+$ vramfit check ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -d 4090 --ctx 32k
+Meta Llama 3.1 8B Instruct  |  Q4_K_M  |  NVIDIA RTX 4090
+=========================================================
+
+Read from ./Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf  (GGUF v3, 292 tensors, llama architecture, Q4_K_M)
+
+FITS  -  9.67 GiB of 24.00 GiB used, 14.33 GiB free (40% utilised)
+
+Memory
+  Weights           4.82 GiB  8.03B params at 5.15 effective bits/weight
+  KV cache          4.00 GiB  32K tokens, 32 layers x 8 KV heads x 128, f16
+  Runtime context   0.70 GiB  cuda-consumer driver and kernels
+  Compute buffer    0.15 GiB  activations, logits and graph scratch
+  Total             9.67 GiB  at Q4_K_M
+  Available        24.00 GiB  NVIDIA RTX 4090
+...
+```
+
+Every number in that report is **measured, not looked up**. The parameter
+count is summed from the file's own shape table — all 292 tensors, including
+the norms a published "8B" rounds away — and the bits per weight are computed
+from the ggml type of each tensor, separately for the transformer blocks
+(`Q4_K` at 144 bytes per 256 weights), the token embedding table and the
+output head (`Q6_K` at 210). Feed those back into `computeWeightBytes` and the
+result comes back to the byte, because the prediction *is* the file.
+
+The reader is streaming: it pulls a window at a time and skips everything it
+does not need — a tokenizer's 128k-entry token list and all of the tensor
+data — so checking a 40 GB checkpoint reads a few hundred kilobytes of it.
+Little-endian GGUF v2 and v3, every metadata value type including nested
+arrays, GQA/MLA/sliding-window attention and MoE expert geometry. A
+big-endian file, a v1 file, a truncated one or an unknown ggml type each fail
+by name rather than producing a plausible wrong answer.
+
 User-supplied specs go through the same validator as the bundled data, which
 enforces the invariants that keep the arithmetic honest — the declared
 parameter count has to match the count the shape fields imply, query heads must
@@ -480,8 +522,9 @@ an MXFP4 checkpoint is twice the bytes for weights that were never wider than
   heterogeneous cards.
 - The runtime context and compute buffer are **empirical**, not derived. They
   are backend- and version-dependent; treat them as ±0.3 GiB and ±50%.
-- There is no model download, no GGUF header parsing and no device probing.
-  `vramfit` never touches the network, at runtime or in its tests.
+- There is no model download and no device probing. `vramfit` never touches
+  the network, at runtime or in its tests: a GGUF header is read from a path
+  you already have, and the test suite builds its GGUF fixtures byte by byte.
 
 ## 8. Development
 
@@ -490,7 +533,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 278 tests across 13 files
+npm test           # vitest -- 329 tests across 16 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 

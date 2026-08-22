@@ -52,6 +52,7 @@ keeps the test files and build scripts honest.
 | `src/offload.ts` | llama.cpp-style layer placement and blended bandwidth |
 | `src/fit.ts` | Composes the above into a verdict, max context and quant recommendation |
 | `src/db/` | The bundled registry and the validator that every spec goes through |
+| `src/gguf/` | Streaming GGUF header reader, and the mapping onto a `ModelSpec` and a `QuantSpec` |
 | `src/cli/` | Hand-rolled argument parsing, formatting and the pure `run(argv, io)` |
 | `src/data/*.json` | The bundled devices and models, each with a `source` string |
 
