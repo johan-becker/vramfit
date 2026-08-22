@@ -14,6 +14,11 @@ export interface WeightBreakdown {
   blockBytes: number;
   /** token_embd + output head. Sized with their own, higher, bit rates. */
   embeddingBytes: number;
+  /** The token_embd table alone. Zero when embeddings are tied. */
+  tokenEmbedBytes: number;
+  /** The matrix that produces logits. Read on every decoded token, unlike
+   *  the embedding table, so partial offload places it separately. */
+  logitMatrixBytes: number;
   /** Bytes read from memory to decode one token: the active share of the
    *  blocks plus the logit matrix. Equals blockBytes + logit matrix for a
    *  dense model; far less for a mixture of experts. */
@@ -76,6 +81,8 @@ export function computeWeightBytes(model: ModelSpec, quant: QuantSpec): WeightBr
     totalBytes,
     blockBytes,
     embeddingBytes: tokenEmbedBytes + logitMatrixBytes,
+    tokenEmbedBytes,
+    logitMatrixBytes,
     activeBytes: blockBytes * activeShare + logitMatrixBytes,
     effectiveBitsPerWeight: model.totalParams > 0 ? (totalBytes * 8) / model.totalParams : 0,
     bytesPerLayer: model.nLayers > 0 ? blockBytes / model.nLayers : 0,
