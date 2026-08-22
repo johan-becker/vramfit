@@ -29,9 +29,22 @@ describe("capacity", () => {
     expect(bytesToGiB(capacity.totalBytes)).toBe(72);
   });
 
-  it("multiplies by the device count and accepts a VRAM override", () => {
+  it("multiplies by the device count", () => {
     expect(computeCapacity(getDevice("rtx-3090"), { gpus: 4 }).totalBytes).toBe(96 * GIB);
-    expect(computeCapacity(getDevice("m4-max"), { vramGiB: 48 }).totalBytes).toBe(48 * GIB * 0.75);
+    expect(computeCapacity(getDevice("rtx-4090"), { vramGiB: 48, gpus: 2 }).totalBytes).toBe(
+      96 * GIB,
+    );
+  });
+
+  it("takes a VRAM override as the usable budget, not a figure to cap again", () => {
+    // The Apple device notes advertise --vram as the escape hatch from the
+    // macOS wired-memory limit, so applying that limit to it left a user who
+    // had raised iogpu.wired_limit_mb to 180 GiB looking at 135.
+    const raised = computeCapacity(getDevice("m2-ultra"), { vramGiB: 180 });
+    expect(bytesToGiB(raised.totalBytes)).toBe(180);
+    expect(bytesToGiB(raised.installedBytes)).toBe(180);
+    // Without the override the default cap still applies.
+    expect(computeCapacity(getDevice("m2-ultra")).totalBytes).toBe(192 * GIB * 0.75);
   });
 
   it("never reads a device count below one", () => {

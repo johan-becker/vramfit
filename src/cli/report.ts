@@ -79,7 +79,9 @@ function memoryPairs(fit: FitResult): Pair[] {
       note:
         fit.gpus > 1
           ? `${fit.gpus} x ${fit.device.name}`
-          : fit.device.usableFraction < 1
+          : // A --vram override is already the usable figure, so there is no
+            // fraction left to explain: capacity and installed are equal.
+            fit.capacity.totalBytes < fit.capacity.installedBytes
             ? `${fit.device.name}, ${formatPercent(fit.device.usableFraction)} of ${bytesToGiB(fit.capacity.installedBytes).toFixed(0)} GiB wirable`
             : fit.device.name,
     },

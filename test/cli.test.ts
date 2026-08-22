@@ -140,6 +140,28 @@ describe("vramfit check", () => {
     expect(payload.throughput.timeToFirstTokenSeconds).toBeLessThan(1);
   });
 
+  it("reports a --vram override as the whole usable budget", () => {
+    const capped = invoke(["check", "llama-3.1-8b", "-d", "m4-max", "--ctx", "8k"]).io.output;
+    expect(capped).toMatch(/Available\s+96\.00 GiB\s+Apple M4 Max, 75% of 128 GiB wirable/);
+    expect(capped).toMatch(/iogpu\.wired_limit_mb/);
+
+    const raised = invoke([
+      "check",
+      "llama-3.1-8b",
+      "-d",
+      "m4-max",
+      "--vram",
+      "120",
+      "--ctx",
+      "8k",
+    ]).io.output;
+    expect(raised).toMatch(/Available\s+120\.00 GiB\s+Apple M4 Max\s*$/m);
+    expect(raised).not.toMatch(/wirable/);
+    // The user has already told us their budget; repeating the how-to-raise-it
+    // advice would be telling them to do what they have just done.
+    expect(raised).not.toMatch(/iogpu\.wired_limit_mb/);
+  });
+
   it("describes latent attention and sliding windows in the cache line", () => {
     expect(invoke(["check", "deepseek-v2-lite", "-d", "4090"]).io.output).toMatch(
       /27 layers x 576-wide latent \(MLA\)/,

@@ -50,7 +50,10 @@ export interface FitOptions {
   /** llama.cpp `--ubatch-size`, which sets the compute buffer width. */
   physicalBatch?: number;
   flashAttention?: boolean;
-  /** Per-device memory override in GiB, for a variant the database lacks. */
+  /**
+   * Usable memory per device in GiB, overriding the database. Taken as-is:
+   * the device's `usableFraction` is not applied on top of it.
+   */
   vramGiB?: number;
   /** System RAM available for offloaded layers, GiB. */
   systemRamGiB?: number;
@@ -118,8 +121,19 @@ export interface FitResult {
   warnings: string[];
 }
 
+/**
+ * Allocatable bytes on one device.
+ *
+ * An explicit override is taken as the budget the user says they can actually
+ * allocate, not as another installed figure to scale down. That is what the
+ * Apple entries advertise it as: macOS wires only ~75% of unified memory for
+ * the GPU by default, `sudo sysctl iogpu.wired_limit_mb=N` raises it, and
+ * `--vram N` is how you tell vramfit about the new limit. Re-applying the 75%
+ * to it would leave a user who had configured 180 GiB looking at 135.
+ */
 function usableBytesPerDevice(device: DeviceSpec, vramGiB?: number): number {
-  return (vramGiB ?? device.vramGiB) * GIB * device.usableFraction;
+  if (vramGiB !== undefined) return vramGiB * GIB;
+  return device.vramGiB * GIB * device.usableFraction;
 }
 
 function normalizeGpus(gpus: number | undefined): number {
@@ -197,6 +211,7 @@ function collectWarnings(
   ctx: number,
   gpus: number,
   offload: OffloadResult | null,
+  vramOverridden: boolean,
 ): string[] {
   const warnings: string[] = [];
 
@@ -205,9 +220,9 @@ function collectWarnings(
       `Requested context ${ctx} exceeds ${model.name}'s trained maximum of ${model.maxCtx}; quality degrades beyond it even where memory allows.`,
     );
   }
-  if (device.unifiedMemory && device.family === "metal") {
+  if (device.unifiedMemory && device.family === "metal" && !vramOverridden) {
     warnings.push(
-      `${device.name} shares memory with the OS: only ${Math.round(device.usableFraction * 100)}% is wirable for the GPU by default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N".`,
+      `${device.name} shares memory with the OS: only ${Math.round(device.usableFraction * 100)}% is wirable for the GPU by default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N" and pass the result as --vram.`,
     );
   }
   if (gpus > 1) {
@@ -340,7 +355,15 @@ export function checkFit(
     throughput,
     offload,
     maxContext: maxContextFor(model, quant, device, options),
-    warnings: collectWarnings(model, quant, device, ctx, gpus, offload),
+    warnings: collectWarnings(
+      model,
+      quant,
+      device,
+      ctx,
+      gpus,
+      offload,
+      options.vramGiB !== undefined,
+    ),
   };
 }
 
