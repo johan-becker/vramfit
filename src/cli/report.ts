@@ -1,6 +1,7 @@
+import type { DeviceComparison } from "../compare.js";
 import type { FitResult, QuantOption } from "../fit.js";
 import { findQuant } from "../quant.js";
-import type { DeviceSpec, ModelSpec } from "../types.js";
+import type { DeviceSpec, ModelSpec, QuantSpec } from "../types.js";
 import { bytesToGiB, formatBytes, formatContext, formatParams } from "../units.js";
 import type { ResolvedModel } from "./source.js";
 import {
@@ -476,4 +477,120 @@ export function renderModels(models: readonly ModelSpec[]): string[] {
           : "GQA",
     ]),
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* compare                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** How a device is named in a table: "RTX 4090" or "2 x RTX 4090". */
+function deviceLabel(comparison: DeviceComparison): string {
+  return comparison.gpus > 1
+    ? `${comparison.gpus} x ${comparison.device.name}`
+    : comparison.device.name;
+}
+
+/** The `vramfit compare` table: one model, every device, best first. */
+export function renderCompare(
+  model: ModelSpec,
+  quant: QuantSpec,
+  rows: readonly DeviceComparison[],
+  ctx: number,
+  report: ReportOptions = {},
+): string[] {
+  const heading = `${model.name}  |  ${quant.label}  |  ${formatContext(ctx)} context`;
+  const starved = rows.find((row) => row.fit.offload !== null && !row.fit.offload.feasible);
+
+  const table = renderTable(
+    [
+      { header: "" },
+      { header: "Device" },
+      { header: "Memory", align: "right" },
+      { header: "Needed", align: "right" },
+      { header: "Free", align: "right" },
+      { header: "Fits", align: "right" },
+      { header: "Max ctx", align: "right" },
+      { header: "Decode", align: "right" },
+    ],
+    rows.map((row) => [
+      row.best ? "->" : "",
+      deviceLabel(row),
+      formatBytes(row.fit.capacity.totalBytes),
+      formatBytes(row.fit.usedBytes),
+      formatBytes(row.headroomBytes),
+      row.fit.fits ? "yes" : "no",
+      row.fit.maxContext > 0 ? formatContext(row.fit.maxContext) : "-",
+      `${formatRate(row.decodeTokensPerSecond)}${
+        row.fit.offload !== null && !row.fit.offload.feasible ? " *" : ""
+      }`,
+    ]),
+  );
+
+  const best = rows.find((row) => row.best);
+  // Nothing fits: the ranking put the row that came closest first.
+  const closest = rows[0];
+
+  return [
+    heading,
+    "=".repeat(heading.length),
+    "",
+    ...sourceLines(report),
+    ...table,
+    "",
+    ...(rows.some((row) => !row.fit.fits)
+      ? wrap(
+          "Rows that do not fit show the decode speed with as many layers as possible offloaded to system RAM, which is what you would actually get.",
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(starved
+      ? wrap(
+          `* the offloaded remainder needs more system RAM than the ${formatBytes(starved.fit.offload?.systemRamAvailableBytes ?? 0)} assumed here, so that row would not load at all. Say what you have with --ram.`,
+          WRAP_WIDTH,
+        ).concat("")
+      : []),
+    ...(best
+      ? wrap(
+          `Best: ${deviceLabel(best)} -- ${formatRate(best.decodeTokensPerSecond)} at ${formatContext(ctx)} with ${formatBytes(best.headroomBytes)} to spare, and room for ${formatContext(best.fit.maxContext)} of context.`,
+          WRAP_WIDTH,
+        )
+      : wrap(
+          `Nothing here fits ${model.name} at ${quant.label} and ${formatContext(ctx)} context.${
+            closest === undefined
+              ? ""
+              : ` ${deviceLabel(closest)} came closest, ${formatBytes(-closest.headroomBytes)} short -- a narrower quantization or a shorter context is the cheaper fix than more hardware.`
+          }`,
+          WRAP_WIDTH,
+        )),
+  ];
+}
+
+/** The `vramfit compare --json` payload. */
+export function compareJson(
+  model: ModelSpec,
+  quant: QuantSpec,
+  rows: readonly DeviceComparison[],
+  ctx: number,
+  version: string,
+): unknown {
+  return {
+    vramfit: version,
+    model: { id: model.id, name: model.name, totalParams: model.totalParams },
+    config: { quant: quant.id, ctx },
+    best: rows.find((row) => row.best)?.device.id ?? null,
+    devices: rows.map((row) => ({
+      id: row.device.id,
+      name: row.device.name,
+      count: row.gpus,
+      capacityBytes: row.fit.capacity.totalBytes,
+      totalBytes: row.fit.usedBytes,
+      headroomBytes: row.headroomBytes,
+      utilization: row.fit.utilization,
+      fits: row.fit.fits,
+      maxContext: row.fit.maxContext,
+      decodeTokensPerSecond: row.decodeTokensPerSecond,
+      offloadFeasible: row.fit.offload === null || row.fit.offload.feasible,
+      best: row.best,
+    })),
+  };
 }
