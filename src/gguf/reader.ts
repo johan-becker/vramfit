@@ -53,6 +53,8 @@ export interface GgufReadOptions {
   maxArrayValues?: number;
   /** Longest metadata string accepted, in bytes. */
   maxStringBytes?: number;
+  /** Deepest nesting accepted in an array of arrays. */
+  maxArrayDepth?: number;
   /** Most tensors accepted in the shape table. */
   maxTensors?: number;
   /** Most metadata entries accepted. */
@@ -63,6 +65,13 @@ const DEFAULT_CHUNK_BYTES = 256 * 1024;
 const DEFAULT_MAX_ARRAY_VALUES = 64;
 /** Metadata strings are names, templates and licences. A MiB is generous. */
 const DEFAULT_MAX_STRING_BYTES = 1024 * 1024;
+/**
+ * Deepest array-of-arrays accepted. Real files reach 2; each level costs 12
+ * bytes in the file and one JavaScript stack frame to walk, so without a
+ * bound a 1.2 MB header nested 100,000 deep overflows the stack and leaves a
+ * `RangeError` where the reader promises a diagnostic naming the file.
+ */
+const DEFAULT_MAX_ARRAY_DEPTH = 64;
 /** DeepSeek V3 at 61 layers x 256 experts is about 5000 tensors. */
 const DEFAULT_MAX_TENSORS = 1_048_576;
 const DEFAULT_MAX_METADATA_ENTRIES = 65_536;
@@ -257,9 +266,17 @@ class Cursor {
 interface Limits {
   maxArrayValues: number;
   maxStringBytes: number;
+  maxArrayDepth: number;
 }
 
-function readScalar(cursor: Cursor, type: GgufTypeName, what: string, limits: Limits): GgufValue {
+/** `depth` is the nesting level of the array being walked; 0 outside one. */
+function readScalar(
+  cursor: Cursor,
+  type: GgufTypeName,
+  what: string,
+  limits: Limits,
+  depth: number,
+): GgufValue {
   switch (type) {
     case "uint8":
       return cursor.u8();
@@ -286,11 +303,17 @@ function readScalar(cursor: Cursor, type: GgufTypeName, what: string, limits: Li
     case "float64":
       return cursor.f64();
     case "array":
-      return readArray(cursor, what, limits);
+      return readArray(cursor, what, limits, depth + 1);
   }
 }
 
-function skipValue(cursor: Cursor, type: GgufTypeName, what: string, limits: Limits): void {
+function skipValue(
+  cursor: Cursor,
+  type: GgufTypeName,
+  what: string,
+  limits: Limits,
+  depth: number,
+): void {
   const width = GGUF_FIXED_WIDTHS[type];
   if (width !== undefined) {
     cursor.skip(width);
@@ -300,7 +323,7 @@ function skipValue(cursor: Cursor, type: GgufTypeName, what: string, limits: Lim
     cursor.skipString(what, limits.maxStringBytes);
     return;
   }
-  readArray(cursor, what, { ...limits, maxArrayValues: 0 });
+  readArray(cursor, what, { ...limits, maxArrayValues: 0 }, depth + 1);
 }
 
 /**
@@ -314,7 +337,14 @@ function skipValue(cursor: Cursor, type: GgufTypeName, what: string, limits: Lim
  * `tokenizer.ggml.tokens`, which is why the count matters and the contents
  * do not.
  */
-function readArray(cursor: Cursor, what: string, limits: Limits): GgufArray {
+function readArray(cursor: Cursor, what: string, limits: Limits, depth: number): GgufArray {
+  // Nesting is walked by mutual recursion and costs 12 bytes a level in the
+  // file, so it is bounded like every other length here: an unbounded walk
+  // turns a small crafted header into a stack overflow rather than into a
+  // diagnostic naming the file.
+  if (depth > limits.maxArrayDepth) {
+    throw new GgufError(`${what} nests arrays more than ${limits.maxArrayDepth} deep`);
+  }
   const typeCode = cursor.u32();
   const elementType = ggufTypeName(typeCode);
   if (elementType === undefined) {
@@ -326,7 +356,7 @@ function readArray(cursor: Cursor, what: string, limits: Limits): GgufArray {
   const decoded = Math.min(length, limits.maxArrayValues);
   const values: GgufValue[] = [];
   for (let index = 0; index < decoded; index++) {
-    values.push(readScalar(cursor, elementType, `${what}[${index}]`, limits));
+    values.push(readScalar(cursor, elementType, `${what}[${index}]`, limits, depth));
   }
 
   const remaining = length - decoded;
@@ -335,7 +365,7 @@ function readArray(cursor: Cursor, what: string, limits: Limits): GgufArray {
       cursor.skip(width * remaining);
     } else {
       for (let index = 0; index < remaining; index++) {
-        skipValue(cursor, elementType, `${what}[${decoded + index}]`, limits);
+        skipValue(cursor, elementType, `${what}[${decoded + index}]`, limits, depth);
       }
     }
   }
@@ -390,6 +420,7 @@ export function readGgufHeader(source: ByteSource, options: GgufReadOptions = {}
   const limits: Limits = {
     maxArrayValues: Math.max(0, Math.floor(options.maxArrayValues ?? DEFAULT_MAX_ARRAY_VALUES)),
     maxStringBytes: Math.max(1, Math.floor(options.maxStringBytes ?? DEFAULT_MAX_STRING_BYTES)),
+    maxArrayDepth: Math.max(1, Math.floor(options.maxArrayDepth ?? DEFAULT_MAX_ARRAY_DEPTH)),
   };
   const maxTensors = Math.max(0, Math.floor(options.maxTensors ?? DEFAULT_MAX_TENSORS));
   const maxMetadata = Math.max(
@@ -422,7 +453,7 @@ export function readGgufHeader(source: ByteSource, options: GgufReadOptions = {}
     }
     // Later entries win, matching llama.cpp, but a duplicated key is worth
     // knowing about rather than silently resolving.
-    metadata.set(key, readScalar(cursor, type, `metadata "${key}"`, limits));
+    metadata.set(key, readScalar(cursor, type, `metadata "${key}"`, limits, 0));
   }
 
   const tensors: GgufTensorInfo[] = [];
