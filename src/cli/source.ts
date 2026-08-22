@@ -38,6 +38,10 @@ export interface SourceIo {
   readFile(path: string): string;
   openBytes?(path: string): ClosableByteSource;
   pathKind?(path: string): PathKind;
+  /** True when stdout is a terminal. Absent means "assume it is not". */
+  isTty?: boolean;
+  /** Environment lookup, for NO_COLOR and friends. Absent means empty. */
+  env?(name: string): string | undefined;
 }
 
 const PATH_PREFIXES = ["./", "../", ".\\", "..\\", "~/", "/"];

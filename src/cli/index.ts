@@ -26,6 +26,7 @@ import {
 } from "../recommend.js";
 import type { DeviceSpec, QuantSpec } from "../types.js";
 import { Args, UsageError } from "./args.js";
+import { createPalette, shouldUseColor, type Palette } from "./color.js";
 import {
   directoryOf,
   isDirectoryPath,
@@ -98,6 +99,10 @@ export const defaultIo: Io = {
     const stat = statSync(path, { throwIfNoEntry: false });
     if (stat === undefined) return "missing";
     return stat.isDirectory() ? "directory" : "file";
+  },
+  isTty: process.stdout.isTTY === true,
+  env(name) {
+    return process.env[name];
   },
 };
 
@@ -199,6 +204,9 @@ LAUNCHER
 
 OUTPUT
       --json               Machine-readable output.
+      --color/--no-color   Force ANSI colour on or off. The default is on for
+                           a terminal and off for a pipe, and NO_COLOR is
+                           honoured.
   -h, --help               This text.
   -v, --version            Print the version.
 
@@ -237,6 +245,7 @@ const SHARED_FLAGS = [
   "efficiency",
   "prefill-efficiency",
   "json",
+  "color",
   "help",
 ] as const;
 
@@ -369,6 +378,21 @@ function assertNoExtraArguments(args: Args, command: string, allowed: number): v
   );
 }
 
+/**
+ * Colour is a property of where the output is going, not of the command, so
+ * it is decided once from the IO object and an explicit flag.
+ */
+function resolvePalette(args: Args, io: Io): Palette {
+  const requested = args.boolean("color");
+  return createPalette(
+    shouldUseColor({
+      ...(io.isTty === undefined ? {} : { isTty: io.isTty }),
+      ...(io.env === undefined ? {} : { env: (name: string) => io.env?.(name) }),
+      ...(requested === undefined ? {} : { requested }),
+    }),
+  );
+}
+
 function emit(io: Io, lines: readonly string[]): void {
   io.out(lines.join("\n"));
 }
@@ -445,6 +469,7 @@ function runCheck(args: Args, io: Io, version: string): number {
       io,
       renderCheck(fit, recommendation, {
         source,
+        palette: resolvePalette(args, io),
         ...(launcher === undefined || runtime === undefined
           ? {}
           : { launcher: { plan: launcher, runtime } }),
