@@ -40,6 +40,11 @@ describe("runtime context overhead", () => {
   });
 });
 
+/** Hand-computed compute buffer for LLAMA_3_1_8B: graph plus FP32 logits. */
+function llamaGraphBytes(tokensInFlight: number, batch: number): number {
+  return tokensInFlight * (4096 * 18 + 14_336 * 6) * 2 + batch * 128_256 * 4;
+}
+
 describe("activation / compute buffer", () => {
   it("matches the hand-computed graph size for Llama 3.1 8B at 8K", () => {
     // ubatch 512 tokens; 18 residual-width + 6 intermediate-width tensors:
@@ -114,10 +119,12 @@ describe("activation / compute buffer", () => {
   it("never widens the graph beyond the tokens there are to evaluate", () => {
     // 64 tokens across 4 sequences is 256 tokens in flight, under the 512-wide
     // micro-batch, so the graph is sized for 256.
-    const graph = (tokens: number): number =>
-      tokens * (4096 * 18 + 14_336 * 6) * 2 + 4 * 128_256 * 4;
-    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 64, batch: 4 })).toBe(graph(256));
-    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 4096, batch: 4 })).toBe(graph(512));
+    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 64, batch: 4 })).toBe(
+      llamaGraphBytes(256, 4),
+    );
+    expect(computeActivationBytes(LLAMA_3_1_8B, { ctx: 4096, batch: 4 })).toBe(
+      llamaGraphBytes(512, 4),
+    );
   });
 });
 
