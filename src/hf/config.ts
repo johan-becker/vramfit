@@ -17,8 +17,10 @@ import type {
  * and means "same as the query heads"; `head_dim` is absent on most and means
  * `hidden_size / num_attention_heads`, except on the models where it does not;
  * the expert count is `num_local_experts` on Mixtral, `num_experts` on
- * Qwen3-MoE and `n_routed_experts` on DeepSeek; and `sliding_window` is set
- * but inert on Qwen2 unless `use_sliding_window` is true.
+ * Qwen3-MoE and `n_routed_experts` on DeepSeek; `sliding_window` is set but
+ * inert on Qwen2 unless `use_sliding_window` is true; and `tie_word_embeddings`
+ * is absent from every config that ties, because `PretrainedConfig` defaults it
+ * to true and `to_diff_dict` writes only what differs from the default.
  *
  * Getting any of those wrong is a wrong VRAM number rather than a crash, which
  * is why each one is spelled out below with the alternatives it accepts.
@@ -291,6 +293,13 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
   const architecture = pickString(config, ["model_type"]) ?? pickString(root, ["model_type"]) ?? "unknown";
   const name = displayName(root, architecture);
   const mla = mlaFrom(config);
+  // Absent means tied. `PretrainedConfig.__init__` defaults the field to true
+  // and `to_diff_dict` omits any value equal to the default, so a checkpoint
+  // that ties -- Gemma, Phi-3, several Qwen and StableLM releases -- ships a
+  // config.json without the key at all. Reading that as "untied" charges a
+  // second vocab x hidden matrix that is not on disk: +22.6% of parameters on
+  // gemma-2-2b, which then fails the safetensors cross-check as well.
+  const tiedDeclared = pickBoolean(config, TIED) ?? pickBoolean(root, TIED);
 
   const draft: ModelSpec = {
     id: slug(name, `hf-${architecture}`),
@@ -307,7 +316,7 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
     headDim: mla === null ? headDim : mla.qkNopeHeadDim + mla.qkRopeHeadDim,
     ffnHidden,
     vocabSize,
-    tiedEmbeddings: pickBoolean(config, TIED) ?? pickBoolean(root, TIED) ?? false,
+    tiedEmbeddings: tiedDeclared ?? true,
     attention: mla === null ? "gqa" : "mla",
     mla,
     moe: moeFrom(config, nLayers, ffnHidden),
@@ -325,6 +334,11 @@ export function modelFromHfConfig(value: unknown, options: HfModelOptions = {}):
   // includes the norms and biases the architecture sum leaves out.
   const derived = deriveArchitecture(draft);
   const notes: string[] = [];
+  if (tiedDeclared === undefined) {
+    notes.push(
+      `This config does not set tie_word_embeddings, which transformers defaults to true and writes out only when it is false. The output projection is therefore charged as the embedding table rather than as a second ${vocabSize} x ${hiddenSize} matrix; pass a spec with --model-json if the checkpoint really does carry both.`,
+    );
+  }
   let paramSource: ParamSource = "architecture";
   let totalParams = derived.derivedTotalParams;
 

@@ -232,6 +232,35 @@ describe("modelFromHfConfig", () => {
     expect(model.attentionWindow).toEqual({ windowSize: 512, fullAttentionEvery: 4 });
   });
 
+  it("reads an absent tie_word_embeddings as tied, the way transformers does", () => {
+    // Every other fixture here sets the key, which is exactly the case
+    // save_pretrained does not produce: PretrainedConfig defaults it to true
+    // and to_diff_dict omits whatever equals the default, so the checkpoints
+    // that tie -- Gemma, Phi-3, several Qwen releases -- ship without it.
+    const GEMMA_2_2B = {
+      _name_or_path: "google/gemma-2-2b-it",
+      model_type: "gemma2",
+      hidden_size: 2304,
+      intermediate_size: 9216,
+      head_dim: 256,
+      num_attention_heads: 8,
+      num_hidden_layers: 26,
+      num_key_value_heads: 4,
+      max_position_embeddings: 8192,
+      torch_dtype: "bfloat16",
+      vocab_size: 256_000,
+    };
+
+    const { model, notes } = modelFromHfConfig(GEMMA_2_2B);
+    expect(model.tiedEmbeddings).toBe(true);
+    expect(notes[0]).toMatch(/does not set tie_word_embeddings/);
+
+    // Reading it as untied invents a second 256000 x 2304 matrix: +589.8M
+    // parameters, 22.6% of the model, on a key that is absent by design.
+    const untied = modelFromHfConfig({ ...GEMMA_2_2B, tie_word_embeddings: false }).model;
+    expect(untied.totalParams - model.totalParams).toBe(256_000 * 2304);
+  });
+
   it("charges a tied embedding table once", () => {
     const untied = modelFromHfConfig(LLAMA_31_8B).model;
     const tied = modelFromHfConfig({ ...LLAMA_31_8B, tie_word_embeddings: true }).model;
