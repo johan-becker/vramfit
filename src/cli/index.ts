@@ -333,20 +333,35 @@ function resolvePath(io: Io, path: string): ResolvedModel {
   );
 }
 
-/** Resolve the `<model>` argument, from the database or from a file. */
+/**
+ * Resolve the `<model>` argument, from the database or from a file.
+ *
+ * Two sources are refused rather than ranked, on the same grounds as `--json`
+ * with `--markdown`: preferring one silently answers a question that was not
+ * asked, and here the answer is a VRAM verdict for a different model.
+ */
 function resolveModelSource(args: Args, io: Io): ResolvedModel {
   const ggufPath = args.string("gguf");
-  if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
-
   const hfPath = args.string("hf-config");
-  if (hfPath !== undefined) return resolveHfCheckpoint(io, hfPath);
-
   const specPath = args.string("model-json");
+  const name = args.positionals[1];
+
+  const given = [
+    name === undefined ? undefined : `the model "${name}"`,
+    ggufPath === undefined ? undefined : `--gguf ${ggufPath}`,
+    hfPath === undefined ? undefined : `--hf-config ${hfPath}`,
+    specPath === undefined ? undefined : `--model-json ${specPath}`,
+  ].filter((entry): entry is string => entry !== undefined);
+
+  if (given.length > 1) {
+    throw new UsageError(`${given.join(" and ")} are different models; pick one.`);
+  }
+
+  if (ggufPath !== undefined) return resolveGgufPath(io, ggufPath);
+  if (hfPath !== undefined) return resolveHfCheckpoint(io, hfPath);
   if (specPath !== undefined) {
     return { model: loadJsonFile(io, specPath, parseModelSpec), origin: "json", from: specPath };
   }
-
-  const name = args.positionals[1];
   if (name === undefined) {
     throw new UsageError("A model is required. Try \"vramfit models\" for the bundled list.");
   }

@@ -158,6 +158,26 @@ describe("vramfit check <path> diagnostics", () => {
     expect(io.errors).toMatch(/\.\/notes\.gguf: not a GGUF file: it starts with "just"/);
   });
 
+  it("refuses two model sources instead of quietly preferring one", () => {
+    // The same ground --json with --markdown is refused on: preferring one
+    // silently answers a question that was not asked, and here the answer is
+    // a verdict for a different model.
+    const both = new FakeIo({ binary: { [LLAMA_PATH]: llamaGgufBytes() } });
+    expect(run(["check", "llama-3.3-70b", "--gguf", LLAMA_PATH, "-d", "4090"], both)).toBe(
+      EXIT_USAGE,
+    );
+    expect(both.errors).toMatch(
+      /the model "llama-3\.3-70b" and --gguf \.\/models\/.*\.gguf are different models; pick one/,
+    );
+    expect(both.stdout).toEqual([]);
+
+    const flags = new FakeIo({ binary: { [LLAMA_PATH]: llamaGgufBytes() } });
+    expect(
+      run(["check", "--gguf", LLAMA_PATH, "--hf-config", "./Qwen3-30B-A3B", "-d", "4090"], flags),
+    ).toBe(EXIT_USAGE);
+    expect(flags.errors).toMatch(/--gguf .* and --hf-config \.\/Qwen3-30B-A3B are different/);
+  });
+
   it("names a directory pointed at the GGUF reader", () => {
     // A directory opens and stats happily on macOS and Linux, so the failure
     // came out of the first read as a bare EISDIR: no path, and none of the
