@@ -1139,4 +1139,6 @@ Contributions are taken under the Developer Certificate of Origin and are
 licensed under the same Apache License, Version 2.0 — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Copyright © 2026 Johan Becker.
+Copyright © 2026 Johan Becker. "vramfit" and its logo are unregistered trade
+marks of Johan Becker; the code licence grants no rights in them — see
+[TRADEMARKS.md](TRADEMARKS.md).
