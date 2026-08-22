@@ -19,6 +19,7 @@ import {
   u32,
   u64,
   u8,
+  type GgufFixtureValue,
 } from "./gguf-fixtures.js";
 
 /**
@@ -265,6 +266,40 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     expect(recording.highWaterMark).toBeLessThanOrEqual(header.dataOffset + 4096);
     expect(header.bytesRead).toBeLessThan(header.dataOffset + 4096);
     expect(header.bytesRead / fileBytes).toBeLessThan(0.0001);
+  });
+
+  it("refuses an array nested deeper than the limit, rather than overflowing", () => {
+    // Every other bound in this reader is enforced; nesting was the one that
+    // was not. Each level costs 12 bytes in the file and one stack frame to
+    // walk it, so a small crafted header reached the stack limit and threw a
+    // RangeError with no file name, no offset and no help line -- exactly
+    // what "fail with a clear diagnostic" is supposed to prevent.
+    const nest = (levels: number): GgufFixtureValue =>
+      levels === 0 ? arr("uint32", [u32(1)]) : arr("array", [nest(levels - 1)]);
+
+    const build = (levels: number): Uint8Array =>
+      new GgufBuilder()
+        .kv("general.architecture", str("llama"))
+        .kv("a.deep", nest(levels))
+        .tensor("token_embd.weight", [8, 16], 0)
+        .build();
+
+    const deep = build(200);
+    expect(() => readGgufHeader(source(deep))).toThrow(GgufError);
+    expect(() => readGgufHeader(source(deep))).toThrow(
+      /metadata "a\.deep".* nests arrays more than 64 deep/,
+    );
+    // The walk that skips undecoded elements recurses the same way.
+    expect(() => readGgufHeader(source(deep), { maxArrayValues: 0 })).toThrow(
+      /nests arrays more than 64 deep/,
+    );
+
+    // Two levels is as deep as a real file goes, and still reads.
+    const shallow = build(1);
+    expect(readGgufHeader(source(shallow)).metadata.has("a.deep")).toBe(true);
+    expect(() => readGgufHeader(source(shallow), { maxArrayDepth: 1 })).toThrow(
+      /nests arrays more than 1 deep/,
+    );
   });
 
   it("stays bounded even with a 128k-entry tokenizer in the header", () => {
