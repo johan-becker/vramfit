@@ -54,11 +54,22 @@ arithmetic and which are estimates with an error band.
 
 ## 2. Quickstart
 
+`vramfit` is not on the npm registry, so build it from the repository. Node 20
+or newer is the only requirement — there are no runtime dependencies to
+resolve.
+
 ```sh
-npx vramfit check llama-3.1-8b --device 4090 --ctx 32k   # no install
-npx vramfit check ./model.gguf --device 4090 --ctx 32k   # or read the file
-npm install -g vramfit                                    # CLI
-npm install vramfit                                       # library
+git clone https://github.com/johan-becker/vramfit
+cd vramfit && npm install && npm run build   # TypeScript to dist/
+npm link                                     # optional: puts vramfit on PATH
+```
+
+Without `npm link`, run the binary in place — `node dist/bin/vramfit.js …` —
+everywhere this README writes `vramfit`.
+
+```sh
+vramfit check llama-3.1-8b --device 4090 --ctx 32k   # the bundled database
+vramfit check ./model.gguf --device 4090 --ctx 32k   # or read the file
 ```
 
 `check` exits **0** when the configuration fits, **1** when it does not and
@@ -988,6 +999,10 @@ vramfit check llama-3.1-8b -d 4090 --ctx 32k --json \
 ```
 
 ### 10.5 Library
+
+The package name resolves once the built checkout is linked — `npm link` in
+the clone, then `npm link vramfit` in the consuming project. Until then,
+import from the build directly: `./dist/index.js`.
 
 ```ts
 import { checkFit, getDevice, getModel, getQuant, recommendQuant } from "vramfit";
