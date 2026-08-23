@@ -1121,7 +1121,7 @@ npm install
 npm run lint       # oxlint, warnings are errors
 npm run typecheck  # tsc --noEmit over src, test, scripts and the vitest config
 npm run build      # tsc + copy the bundled JSON into dist/
-npm test           # vitest -- 488 tests across 23 files
+npm test           # vitest -- 493 tests across 23 files
 npm run smoke      # spawn the built binary and assert its output and exit codes
 ```
 
