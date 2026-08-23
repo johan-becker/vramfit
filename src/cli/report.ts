@@ -721,6 +721,24 @@ function columnStart(separator: string, index: number): number {
 }
 
 /**
+ * Who the recommendation is actually about.
+ *
+ * `--vram` replaces the device's usable capacity, so naming only the card
+ * makes the nothing-fits message a false statement about a real product --
+ * "nothing fits an RTX 4090 at 8K" when the run was capped at 1 GiB. The
+ * override is stated wherever the device is.
+ */
+function recommendSubject(device: DeviceSpec, gpus: number, vramGiB?: number): string {
+  const name = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  return vramGiB === undefined ? name : `${name} (${vramGiB.toFixed(2)} GiB, from --vram)`;
+}
+
+/** Carries `--vram` into a suggested follow-up command, so it is not dropped. */
+function vramSuffix(vramGiB?: number): string {
+  return vramGiB === undefined ? "" : ` --vram ${vramGiB}`;
+}
+
+/**
  * The `vramfit recommend` list.
  *
  * An aligned table would fit more rows on a screen and answer less: the point
@@ -734,8 +752,9 @@ export function renderRecommend(
   rows: readonly Recommendation[],
   ctx: number,
   gpus: number,
+  vramGiB?: number,
 ): string[] {
-  const deviceName = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  const deviceName = recommendSubject(device, gpus, vramGiB);
   const heading = `${deviceName}  |  ${profile.label}  |  ${formatContext(ctx)} context`;
   const lines = [heading, "=".repeat(heading.length), ""];
 
@@ -743,7 +762,7 @@ export function renderRecommend(
     return [
       ...lines,
       ...wrap(
-        `Nothing in the bundled database fits ${deviceName} at ${formatContext(ctx)} of context, even at Q2_K. Reduce the context with --ctx, quantize the cache with --kv-quant q8_0, or run "vramfit check <model> -d ${device.id}" to see what a partial offload would cost.`,
+        `Nothing in the bundled database fits ${deviceName} at ${formatContext(ctx)} of context, even at Q2_K. Reduce the context with --ctx, quantize the cache with --kv-quant q8_0, or run "vramfit check <model> -d ${device.id}${vramSuffix(vramGiB)}" to see what a partial offload would cost.`,
         WRAP_WIDTH,
       ),
     ];

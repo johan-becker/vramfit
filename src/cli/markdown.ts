@@ -334,8 +334,13 @@ export function renderRecommendMarkdown(
   rows: readonly Recommendation[],
   ctx: number,
   gpus: number,
+  vramGiB?: number,
 ): string[] {
-  const deviceName = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  const base = gpus > 1 ? `${gpus} x ${device.name}` : device.name;
+  // As in the terminal renderer: a --vram override has to appear beside the
+  // device, or the nothing-fits line describes a machine nobody asked about.
+  const deviceName =
+    vramGiB === undefined ? base : `${base} (${vramGiB.toFixed(2)} GiB, from --vram)`;
   const heading = `### ${deviceName} — ${profile.label} — ${formatContext(ctx)} context`;
   if (rows.length === 0) {
     return [

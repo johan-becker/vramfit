@@ -669,10 +669,10 @@ function runRecommend(args: Args, io: Io, version: string): number {
       emitJson(io, recommendJson(device, profile, rows, ctx, gpus, version));
       break;
     case "markdown":
-      emit(io, renderRecommendMarkdown(device, profile, rows, ctx, gpus));
+      emit(io, renderRecommendMarkdown(device, profile, rows, ctx, gpus, options.vramGiB));
       break;
     default:
-      emit(io, renderRecommend(device, profile, rows, ctx, gpus));
+      emit(io, renderRecommend(device, profile, rows, ctx, gpus, options.vramGiB));
   }
   return rows.length > 0 ? EXIT_OK : EXIT_DOES_NOT_FIT;
 }

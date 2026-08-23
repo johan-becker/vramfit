@@ -166,6 +166,25 @@ describe("vramfit recommend", () => {
     expect(io.output).toMatch(/--kv-quant q8_0/);
   });
 
+  it("says the capacity is an override rather than blaming the card", () => {
+    // "Nothing fits an RTX 4090 at 8K" is false -- plenty does. What did not
+    // fit is the 1 GiB the run was capped at, so both the header and the
+    // message have to say so, and the follow-up command has to carry the
+    // override rather than silently dropping the user back to 24 GiB.
+    for (const format of [[], ["--markdown"]]) {
+      const { io } = invoke(["recommend", "-d", "4090", "--vram", "1", ...format]);
+      expect(io.output).toMatch(/NVIDIA RTX 4090 \(1\.00 GiB, from --vram\)/);
+    }
+
+    const { io } = invoke(["recommend", "-d", "4090", "--vram", "1"]);
+    expect(io.output).toMatch(/vramfit check <model> -d rtx-4090 --vram\s+1"/);
+
+    // Without the override the device is named plainly, as before.
+    const plain = invoke(["recommend", "-d", "4090", "--limit", "1"]);
+    expect(plain.io.output).toMatch(/^NVIDIA RTX 4090 {2}\| {2}chat/m);
+    expect(plain.io.output).not.toMatch(/--vram/);
+  });
+
   it("names a native quantization as native rather than as a compromise", () => {
     const { io } = invoke(["recommend", "-d", "m3-ultra", "--use-case", "long-context"]);
     expect(io.output).toMatch(/in its native MXFP4/);
