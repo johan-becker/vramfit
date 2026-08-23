@@ -248,7 +248,7 @@ describe("renderExplain", () => {
 
   it("derives the decode efficiency, and says when it did not", () => {
     const derived = renderExplain(fitOf()).join("\n");
-    expect(derived).toMatch(/efficiency\s+0\.75 at 16 bits, less the dequantization penalty/);
+    expect(derived).toMatch(/efficiency\s+0\.75 at 16 bits x \(1 - \(1 - 0\.78\) x 0\.92\) dequantization/);
     expect(derived).toMatch(/decode\s+\d+ GB\/s \/ [\d.]+ GB\s+= \d+\.\d+ tok\/s/);
 
     const overridden = renderExplain(fitOf(LLAMA_3_1_8B, "4090", { efficiency: 0.5 })).join("\n");
@@ -257,6 +257,49 @@ describe("renderExplain", () => {
     const offloaded = renderExplain(fitOf(LLAMA_3_1_70B, "4090")).join("\n");
     expect(offloaded).toMatch(/efficiency\s+blended across the offload split/);
     expect(offloaded).toMatch(/harmonic mean/);
+  });
+
+  it("prints an efficiency line that multiplies out to the value beside it", () => {
+    // The point of --explain is that a reader can check the arithmetic. This
+    // line once read "0.75 at 16 bits, less the dequantization penalty at 0.92
+    // of full = 0.598", and 0.75 x 0.92 is 0.69: the factor that turns one
+    // into the other was computed but never printed. Every number the value
+    // came from has to appear on the line, so parse them back out and multiply.
+    for (const deviceId of ["4090", "m4-max", "a100-80"]) {
+      const text = renderExplain(fitOf(LLAMA_3_1_8B, deviceId)).join("\n");
+      const line = /^ +efficiency .*$/m.exec(text)?.[0];
+      expect(line, deviceId).toBeDefined();
+      const parts =
+        /^ +efficiency +([\d.]+) at 16 bits x \(1 - \(1 - ([\d.]+)\) x ([\d.]+)\) dequantization += ([\d.]+)$/.exec(
+          line as string,
+        );
+      expect(parts, `${deviceId}: ${line}`).not.toBeNull();
+      const [base, atFourBits, narrowness, value] = parts!.slice(1).map(Number) as [
+        number,
+        number,
+        number,
+        number,
+      ];
+      expect(base * (1 - (1 - atFourBits) * narrowness), `${deviceId}: ${line}`).toBeCloseTo(
+        value,
+        3,
+      );
+    }
+  });
+
+  it("rounds a bits-per-weight derived from a file to the column's precision", () => {
+    // A GGUF's own tensor mix gives a full double. Printed raw it read
+    // "6,979,588,160 x 4.798513865322391 / 8" in a column of two-decimal
+    // figures; the bundled table's short literals must still print unchanged.
+    const measured = { ...getQuant("q4_k_m"), bitsPerWeight: 4.798_513_865_322_391 };
+    const fromFile = renderExplain(
+      checkFit(LLAMA_3_1_8B, measured, getDevice("4090"), { ctx: 8192 }),
+    ).join("\n");
+    expect(fromFile).toMatch(/blocks\s+6,979,326,848 x 4\.799 \/ 8/);
+    expect(fromFile).not.toMatch(/4\.7985/);
+    expect(renderExplain(fitOf())).toContainEqual(
+      expect.stringMatching(/blocks\s+6,979,326,848 x 4\.83 \/ 8/),
+    );
   });
 
   it("uses the latent formula for latent attention", () => {

@@ -1,7 +1,12 @@
 import { deriveArchitecture } from "../architecture.js";
 import type { FitResult } from "../fit.js";
 import { RUNTIME_CONTEXT_BYTES } from "../memory.js";
-import { PREFILL_MFU, bandwidthEfficiency } from "../throughput.js";
+import {
+  DEQUANT_EFFICIENCY,
+  MEMORY_BANDWIDTH_EFFICIENCY,
+  PREFILL_MFU,
+  bandwidthEfficiency,
+} from "../throughput.js";
 import { GB_DECIMAL, GIB, bytesToGiB, formatContext } from "../units.js";
 import { wrap } from "./format.js";
 
@@ -34,6 +39,18 @@ function gib(bytes: number, decimals = 3): string {
 /** Decimal GB, which is the unit bandwidth and FLOPs are quoted in. */
 function gb(bytes: number, decimals = 2): string {
   return `${(bytes / GB_DECIMAL).toFixed(decimals)} GB`;
+}
+
+/**
+ * Bits per weight, to at most three decimals and with no trailing zeros.
+ *
+ * The bundled quantization table holds short literals (4.83, 6.56) and they
+ * must print back unchanged; a width derived from a GGUF file's own tensor mix
+ * is a full double, and printing 4.798513865322391 in a column of two-decimal
+ * figures makes the block unreadable.
+ */
+function bits(value: number): string {
+  return String(Number(value.toFixed(3)));
 }
 
 interface Line {
@@ -70,20 +87,20 @@ function weightLines(fit: FitResult): string[] {
   const lines: Line[] = [
     {
       label: "blocks",
-      expression: `${groupDigits(blockParams)} x ${fit.quant.bitsPerWeight} / 8`,
+      expression: `${groupDigits(blockParams)} x ${bits(fit.quant.bitsPerWeight)} / 8`,
       value: gib(weights.blockBytes),
     },
   ];
   if (weights.tokenEmbedBytes > 0) {
     lines.push({
       label: "token_embd",
-      expression: `${groupDigits(arch.inputEmbedParams)} x ${fit.quant.tokenEmbedBits} / 8`,
+      expression: `${groupDigits(arch.inputEmbedParams)} x ${bits(fit.quant.tokenEmbedBits)} / 8`,
       value: gib(weights.tokenEmbedBytes),
     });
   }
   lines.push({
     label: fit.model.tiedEmbeddings ? "output (tied)" : "output",
-    expression: `${groupDigits(arch.logitMatrixParams)} x ${fit.quant.outputHeadBits} / 8`,
+    expression: `${groupDigits(arch.logitMatrixParams)} x ${bits(fit.quant.outputHeadBits)} / 8`,
     value: gib(weights.logitMatrixBytes),
   });
   lines.push({
@@ -243,9 +260,12 @@ function decodeLines(fit: FitResult): string[] {
       Math.max((16 - fit.footprint.weights.effectiveBitsPerWeight) / 12, 0),
       1,
     );
+    // Every factor the value came from has to appear, or the line cannot be
+    // multiplied out: base x (1 - (1 - atFourBits) x narrowness). Naming only
+    // the base and the narrowness read as 0.75 x 0.92 = 0.69, not 0.598.
     lines.push({
       label: "efficiency",
-      expression: `${bandwidthEfficiency(fit.device.family, 16).toFixed(2)} at 16 bits, less the dequantization penalty at ${narrowness.toFixed(2)} of full`,
+      expression: `${MEMORY_BANDWIDTH_EFFICIENCY[fit.device.family].toFixed(2)} at 16 bits x (1 - (1 - ${DEQUANT_EFFICIENCY[fit.device.family].toFixed(2)}) x ${narrowness.toFixed(2)}) dequantization`,
       value: decode.efficiency.toFixed(3),
     });
   } else {

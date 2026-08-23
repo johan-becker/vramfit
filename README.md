@@ -825,10 +825,10 @@ Explain  (Llama 3.1 8B at Q4_K_M, 32K context, f16 cache)
     verdict    9.474 GiB <= 24.000 GiB                        = FITS
 
   Decode = bandwidth x efficiency / bytes read per token  (estimate, +/-25%)
-    efficiency      0.75 at 16 bits, less the dequantization penalty at 0.92 of full  = 0.598
-    bandwidth       1008 GB/s x 0.598                                                 = 603 GB/s
-    read per token  4.64 GB active weights + 4.29 GB cache                            = 8.94 GB
-    decode          603 GB/s / 8.94 GB                                                = 67.4 tok/s
+    efficiency      0.75 at 16 bits x (1 - (1 - 0.78) x 0.92) dequantization  = 0.598
+    bandwidth       1008 GB/s x 0.598                                         = 603 GB/s
+    read per token  4.64 GB active weights + 4.29 GB cache                    = 8.94 GB
+    decode          603 GB/s / 8.94 GB                                        = 67.4 tok/s
 
   Prefill = device FLOP/s x MFU / FLOPs per prompt token  (estimate, +/-40%)
     FLOPs/token  2 x 7,504,658,432 active + 8.59 GFLOP of attention  = 23.60 GFLOP
