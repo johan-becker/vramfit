@@ -1119,26 +1119,36 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## 13. License
 
-vramfit is **open source**, licensed under the
-[Apache License, Version 2.0](LICENSE).
-
-**What you may do:** use, modify and redistribute vramfit for any purpose,
-including commercially and inside proprietary products, at any organisation
-size — there is no separate licence to buy and nobody to ask.
-
-**What the licence asks in return:** keep the copyright and licence notices,
-state any significant changes you made, and include the [NOTICE](NOTICE) file
-with any redistribution. The full conditions are in section 4 of the
+vramfit is **open source**, under the
+[Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0) —
+the unmodified licence text as published by the Apache Software Foundation. It
+is an OSI-approved open-source licence, and the full text is in
 [LICENSE](LICENSE).
 
-**Patents are covered.** Apache-2.0 grants an express, royalty-free patent
-licence from every contributor, and that grant terminates for anyone who
-brings a patent claim alleging that the project infringes their patents.
+**What you may do, without asking anyone:** use, modify and redistribute
+vramfit for any purpose, at any organisation size, in production or out of it,
+commercially or not — including inside a closed-source product and as a
+hosted, managed, embedded or resold service. There is no separate licence to
+buy, no organisation-size threshold and no future change of terms to wait for:
+the grant is irrevocable and it applies to everyone, now.
+
+**What the licence asks in return, when you redistribute:** include a copy of
+the licence; keep the copyright, patent, trade mark and attribution notices
+already in the source; state prominently, in any file you changed, that you
+changed it; and pass on the [NOTICE](NOTICE) file — section 4(d) obliges every
+redistributor to reproduce its attribution notices. The full conditions are in
+section 4 of the [LICENSE](LICENSE).
+
+**Patents are covered.** Section 3 grants an express, perpetual, worldwide,
+royalty-free patent licence from every contributor, and that grant terminates
+for anyone who brings a patent claim alleging that the project infringes their
+patents.
 
 Contributions are taken under the Developer Certificate of Origin and are
 licensed under the same Apache License, Version 2.0 — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Copyright © 2026 Johan Becker. "vramfit" and its logo are unregistered trade
-marks of Johan Becker; the code licence grants no rights in them — see
+marks of Johan Becker; section 6 of the licence withholds trade mark rights
+expressly, so the code licence grants no rights in them — see
 [TRADEMARKS.md](TRADEMARKS.md).

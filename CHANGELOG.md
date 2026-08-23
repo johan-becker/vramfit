@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Licensing is now documented in full.** vramfit is distributed under the
   [Apache License, Version 2.0](LICENSE) — OSI-approved open source. Use,
   modification and redistribution are free for any purpose and at any
-  organisation size, including commercially and inside proprietary products.
-  The conditions are the usual Apache ones: keep the copyright and licence
-  notices, state significant changes, and ship the `NOTICE` file with any
-  redistribution. The licence also carries an express patent grant from every
-  contributor, with the standard termination on patent litigation. Licensing
-  contact: jo_becker@mailbox.org.
+  organisation size, including commercially, inside proprietary products and
+  as a hosted, managed, embedded or resold service. The conditions are the
+  usual Apache ones: ship a copy of the licence, keep the copyright, patent,
+  trade mark and attribution notices, note in any file you changed that you
+  changed it, and pass on the `NOTICE` file with any redistribution — section
+  4(d) requires it. The licence also carries an express patent grant from
+  every contributor, with the standard termination on patent litigation, and
+  section 6 withholds trade mark rights expressly. Licensing contact:
+  jo_becker@mailbox.org.
 
 ### Added
 
@@ -224,10 +227,11 @@ and what exactly do I type to start it.
 - Released under the [Apache License, Version 2.0](LICENSE) — OSI-approved
   open source, the same licence 0.1.0 carried. Use, modification and
   redistribution are free for any purpose and at any organisation size,
-  including commercially and inside proprietary products. Keep the copyright
-  and licence notices, state any significant changes, and ship the
-  [`NOTICE`](NOTICE) file with any redistribution — section 4(d) of the
-  licence requires it. An express, royalty-free patent grant from every
+  including commercially, inside proprietary products and as a hosted,
+  managed, embedded or resold service. Keep the copyright, patent, trade mark
+  and attribution notices, note in any file you changed that you changed it,
+  and ship the [`NOTICE`](NOTICE) file with any redistribution — section 4(d)
+  of the licence requires it. An express, royalty-free patent grant from every
   contributor comes with it, terminating for anyone who brings a patent claim
   against the project.
 - "vramfit" and its logo are unregistered trade marks of Johan Becker and are
