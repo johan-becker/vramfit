@@ -412,7 +412,12 @@ would be a larger file holding the same weights.
 
 The reader is streaming: it pulls a window at a time and skips everything it
 does not need — a tokenizer's 128k-entry token list and all of the tensor
-data — so checking a 40 GB checkpoint reads a few hundred kilobytes of it.
+data — so checking a 40 GB checkpoint reads a few megabytes of it, well under
+a thousandth of the file. What it costs is the header, rounded up to the
+256 KB read window: a checkpoint with no tokenizer costs a single window, and a
+Llama-3-sized 128k-token vocabulary with its merges takes it to about 9 MB —
+a fixed-width array is skipped in one jump, but a string array has to be walked
+element by element to find its end.
 Little-endian GGUF v2 and v3, every metadata value type including nested
 arrays, GQA/MLA/sliding-window attention and MoE expert geometry. A
 big-endian file, a v1 file, a truncated one or an unknown ggml type each fail

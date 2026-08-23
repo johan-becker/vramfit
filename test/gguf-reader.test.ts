@@ -17,6 +17,7 @@ import {
   i32,
   i64,
   i8,
+  llamaGgufBuilder,
   llamaGgufBytes,
   str,
   u16,
@@ -284,6 +285,44 @@ describe("readGgufHeader on a multi-gigabyte file", () => {
     expect(recording.highWaterMark).toBeLessThanOrEqual(header.dataOffset + 4096);
     expect(header.bytesRead).toBeLessThan(header.dataOffset + 4096);
     expect(header.bytesRead / fileBytes).toBeLessThan(0.0001);
+  });
+
+  it("stays inside a single read window on a header with no tokenizer", () => {
+    const bytes = llamaGgufBytes();
+    const recording = new RecordingSource(bytes, 40 * 1024 ** 3);
+    const header = readGgufHeader(recording);
+    // 17,984 bytes of header, rounded up to the 256 KB default window.
+    expect(header.bytesRead).toBe(256 * 1024);
+  });
+
+  it("keeps a real 128k-token tokenizer inside a few megabytes", () => {
+    // The README and the website both quantify this, so it needs an absolute
+    // ceiling rather than a bound relative to dataOffset -- that one is
+    // satisfied by any header, however large, and the prose once claimed "a
+    // few hundred kilobytes" while a real Llama-3 header cost twenty-five
+    // times that. Only fixed-width arrays are bulk-skipped; a string array is
+    // walked element by element, so the token list and the merges are pulled
+    // through the window in full and the cost tracks the header size.
+    const builder = llamaGgufBuilder({ tokenCount: 128_256 });
+    builder.kv(
+      "tokenizer.ggml.merges",
+      arr(
+        "string",
+        Array.from({ length: 280_147 }, (_, i) => str(`m${i} n${i}`)),
+      ),
+    );
+    const bytes = builder.build();
+    const fileBytes = 40 * 1024 ** 3;
+    const recording = new RecordingSource(bytes, fileBytes);
+
+    const header = readGgufHeader(recording);
+
+    // The fixture really is the expensive shape, not a stub that passes by
+    // being small: a Llama-3 tokenizer is several megabytes of header.
+    expect(header.dataOffset).toBeGreaterThan(4 * 1024 ** 2);
+    expect(header.bytesRead).toBeLessThan(12 * 1024 ** 2);
+    expect(header.bytesRead / fileBytes).toBeLessThan(0.001);
+    expect(recording.highWaterMark).toBeLessThanOrEqual(header.dataOffset + 256 * 1024);
   });
 
   it("refuses an array nested deeper than the limit, rather than overflowing", () => {
