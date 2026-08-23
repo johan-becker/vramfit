@@ -445,10 +445,10 @@ its `config.json` with `--hf-config`:
 
 ```console
 $ vramfit check ./Qwen3-30B-A3B/ -d m4-max --ctx 32k
-Qwen3-30B-A3B  |  Q4_K_M  |  Apple M4 Max
-=========================================
+Qwen3MoeForCausalLM  |  Q4_K_M  |  Apple M4 Max
+===============================================
 
-Read from ./Qwen3-30B-A3B/config.json  (48 layers, 4 KV heads, parameters from model.safetensors.index.json (2 shards))
+Read from ./Qwen3-30B-A3B/config.json  (48 layers, 4 KV heads, parameters from model.safetensors.index.json (16 shards))
 
 FITS  -  20.80 GiB of 96.00 GiB used, 75.20 GiB free (22% utilised)
 
@@ -477,6 +477,11 @@ Notes
     default. Raise it with "sudo sysctl iogpu.wired_limit_mb=N" and pass the
     result as --vram.
 ```
+
+The title is the checkpoint's own `_name_or_path` where it has one and its
+first `architectures` entry where it does not — Qwen publishes no
+`_name_or_path`, which is why this reads `Qwen3MoeForCausalLM` rather than
+`Qwen3-30B-A3B`.
 
 The config is read from the path you give and nothing else is opened. The
 parameter count comes from the safetensors index beside it
